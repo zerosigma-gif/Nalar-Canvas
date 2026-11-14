@@ -4,7 +4,6 @@ import {
   CanvasNode,
   ConnectorStyle,
   DynamicTableData,
-  NodeKind,
   NodeTextStyle,
   StampFormat,
   TemplateId,

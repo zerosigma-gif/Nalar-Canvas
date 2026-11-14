@@ -5,8 +5,10 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BottomControlBar } from './components/BottomControlBar';
+import { CanvasMinimap } from './components/CanvasMinimap';
 import { CanvasWorkspace } from './components/CanvasWorkspace';
 import { CollaborationModal } from './components/CollaborationModal';
+import { CollaboratorInviteLogin } from './components/CollaboratorInviteLogin';
 import { EncryptionModal } from './components/EncryptionModal';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { MediaModal } from './components/MediaModal';
@@ -71,6 +73,11 @@ function setHashKey(keyBase64: string | null): void {
   window.history.replaceState(null, '', url.toString());
 }
 
+function isInvitePasswordMode(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('invite') === '1' && !getHashKey();
+}
+
 const DEFAULT_USER_COLORS = ['#2563EB', '#059669', '#D97706', '#7C3AED', '#0891B2'];
 
 export default function App() {
@@ -120,8 +127,12 @@ export default function App() {
   const [keyFingerprint, setKeyFingerprint] = useState<string | null>(null);
   const [pendingEncryptedEnvelope, setPendingEncryptedEnvelope] =
     useState<EncryptedEnvelope | null>(null);
-  const [isLockedNeedsPassphrase, setIsLockedNeedsPassphrase] = useState(false);
+  const [isLockedNeedsPassphrase, setIsLockedNeedsPassphrase] = useState<boolean>(() =>
+    isInvitePasswordMode()
+  );
   const [decryptError, setDecryptError] = useState<string | null>(null);
+  const isLockedRef = useRef(isLockedNeedsPassphrase);
+  isLockedRef.current = isLockedNeedsPassphrase;
 
   // WebSocket Real-time State
   const [wsConnected, setWsConnected] = useState(false);
@@ -155,7 +166,7 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Initialize E2EE Key from URL hash or generate fresh key
+  // Initialize E2EE Key from URL hash or generate fresh key (skip when invited via password gate)
   useEffect(() => {
     let cancelled = false;
     async function initKey() {
@@ -174,6 +185,10 @@ export default function App() {
         } catch {
           // Fall through to generate a valid key if hash invalid
         }
+      }
+      if (isInvitePasswordMode()) {
+        // Wait for invited collaborator to enter the project password
+        return;
       }
       const freshB64 = generateRoomKeyBase64();
       const imported = await importRawRoomKey(freshB64);
@@ -314,9 +329,10 @@ export default function App() {
               await applyIncomingEnvelope(msg.encryptedEnvelope);
             } else if (!msg.encrypted && msg.plainBoard) {
               setE2eeEnabled(false);
+              setIsLockedNeedsPassphrase(false);
               setBoard(msg.plainBoard);
-            } else {
-              // Empty fresh room: seed server with our initial board
+            } else if (!isLockedRef.current) {
+              // Empty fresh room: seed server with our initial board (only if not waiting at password login)
               await transmitBoardSync(boardRef.current);
             }
           } else if (msg.type === 'board:updated') {
@@ -721,15 +737,11 @@ export default function App() {
     setZoom(1);
   }, []);
 
-  const handleCenterOrigin = useCallback(() => {
-    setPan({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
-    setZoom(1);
-  }, []);
-
   const handleFitView = useCallback(() => {
     const nodes = boardRef.current.nodes;
     if (nodes.length === 0) {
-      handleCenterOrigin();
+      setPan({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+      setZoom(1);
       return;
     }
     let minX = Infinity;
@@ -744,8 +756,9 @@ export default function App() {
     }
     const worldW = Math.max(300, maxX - minX + 180);
     const worldH = Math.max(250, maxY - minY + 200);
-    const vw = window.innerWidth - 120;
-    const vh = window.innerHeight - 160;
+    const isMobile = window.innerWidth < 768;
+    const vw = window.innerWidth - (isMobile ? 32 : 120);
+    const vh = window.innerHeight - (isMobile ? 140 : 160);
     const nextZoom = Math.min(1.2, Math.max(0.3, Math.min(vw / worldW, vh / worldH)));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
@@ -754,7 +767,7 @@ export default function App() {
       x: window.innerWidth / 2 - centerX * nextZoom,
       y: window.innerHeight / 2 - centerY * nextZoom,
     });
-  }, [handleCenterOrigin]);
+  }, []);
 
   // Apply Template (sample board)
   const handleApplyTemplate = useCallback(
@@ -980,9 +993,83 @@ export default function App() {
       showToast('Kanvas berhasil didekripsi!');
       return true;
     } catch {
-      setDecryptError('Frasa sandi tidak cocok dengan kunci enkripsi ruang ini.');
+      setDecryptError('Kata sandi proyek tidak cocok. Periksa kembali frasa sandi undangan Anda.');
       return false;
     }
+  };
+
+  const handleInviteLoginSubmit = async ({
+    name,
+    color,
+    passphrase,
+  }: {
+    name: string;
+    color: string;
+    passphrase: string;
+  }): Promise<boolean> => {
+    setUserName(name);
+    setUserColor(color);
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'presence:update', name, color }));
+    }
+
+    if (pendingEncryptedEnvelope) {
+      const ok = await handleUnlockWithPassphrase(passphrase);
+      if (ok) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('invite');
+        window.history.replaceState(null, '', url.toString());
+      }
+      return ok;
+    }
+
+    // Room had no encrypted data yet (fresh password-gated room)
+    const { key, keyBase64Url } = await deriveKeyFromPassphrase(passphrase, roomId);
+    const fp = await getKeyFingerprint(key);
+    setCryptoKey(key);
+    cryptoKeyRef.current = key;
+    setRoomKeyBase64(keyBase64Url);
+    setKeyFingerprint(fp);
+    setE2eeEnabled(true);
+    e2eeEnabledRef.current = true;
+    setIsLockedNeedsPassphrase(false);
+    setDecryptError(null);
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invite');
+    url.hash = '';
+    window.history.replaceState(null, '', url.toString());
+
+    await transmitBoardSync(boardRef.current);
+    showToast(`Selamat datang, ${name}! Ruang terenkripsi siap digunakan.`);
+    return true;
+  };
+
+  const handleCreateOwnRoom = async () => {
+    const newRoomId = `ruang-${crypto.randomUUID().slice(0, 6)}`;
+    const freshB64 = generateRoomKeyBase64();
+    const imported = await importRawRoomKey(freshB64);
+    const fp = await getKeyFingerprint(imported);
+
+    setRoomKeyBase64(freshB64);
+    setCryptoKey(imported);
+    cryptoKeyRef.current = imported;
+    setKeyFingerprint(fp);
+    setE2eeEnabled(true);
+    e2eeEnabledRef.current = true;
+    setPendingEncryptedEnvelope(null);
+    setIsLockedNeedsPassphrase(false);
+    setDecryptError(null);
+    setBoard(buildTemplateBoard('mind-mapping', newRoomId));
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', newRoomId);
+    url.searchParams.delete('invite');
+    url.hash = `k=${freshB64}`;
+    window.history.replaceState(null, '', url.toString());
+    setRoomId(newRoomId);
+    showToast(`Ruang baru "${newRoomId}" dibuat.`);
   };
 
   // Multi-format Export Handler
@@ -1037,6 +1124,24 @@ export default function App() {
     [board.nodes, mediaModalNodeId]
   );
 
+  if (isLockedNeedsPassphrase) {
+    return (
+      <CollaboratorInviteLogin
+        roomId={roomId}
+        initialName={userName}
+        initialColor={userColor}
+        wsConnected={wsConnected}
+        peerCount={Math.max(1, peers.length)}
+        envelopeFingerprint={pendingEncryptedEnvelope?.keyFingerprint ?? null}
+        decryptError={decryptError}
+        darkMode={darkMode}
+        onToggleTheme={() => setDarkMode((d) => !d)}
+        onSubmitLogin={handleInviteLoginSubmit}
+        onCreateOwnRoom={handleCreateOwnRoom}
+      />
+    );
+  }
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-slate-100">
       <TopBar
@@ -1075,10 +1180,9 @@ export default function App() {
         />
       )}
 
-      {/* Left Floating Creation & Navigation Toolbar */}
+      {/* Left Floating Creation & Navigation Toolbar (Desktop rail / Mobile launcher) */}
       <FloatingToolbar
         tool={tool}
-        hasSelection={Boolean(selectedNodeId)}
         canUndo={past.length > 0}
         canRedo={future.length > 0}
         onSelectTool={(t) => {
@@ -1086,14 +1190,12 @@ export default function App() {
           if (t !== 'connect') setConnectSourceId(null);
         }}
         onAddFloatingNode={handleAddFloatingNode}
-        onAddChildNode={() => selectedNodeId && handleSpawnChild(selectedNodeId)}
         onAddTableNode={handleAddTableNode}
         onAddMediaNode={() => {
           setPendingMediaNewNode(true);
           setMediaModalNodeId('__new__');
         }}
         onAddStickyNote={handleAddStickyNote}
-        onOrganizeLayout={() => handleOrganizeLayout()}
         onUndo={handleUndo}
         onRedo={handleRedo}
       />
@@ -1130,6 +1232,17 @@ export default function App() {
         />
       </main>
 
+      {/* Floating Canvas Minimap */}
+      <CanvasMinimap
+        nodes={board.nodes}
+        edges={board.edges}
+        selectedNodeId={selectedNodeId}
+        pan={pan}
+        zoom={zoom}
+        darkMode={darkMode}
+        onJumpToPan={(nextPan) => setPan(nextPan)}
+      />
+
       {/* Bottom Floating Bar: Parallel Day/Time Stamp Input + Zoom Out / Zoom In + Rapikan */}
       <BottomControlBar
         zoom={zoom}
@@ -1139,15 +1252,18 @@ export default function App() {
         onZoomOut={handleZoomOut}
         onResetZoom={handleResetZoom}
         onFitView={handleFitView}
-        onCenterOrigin={handleCenterOrigin}
         onInsertDateTimeStamp={handleInsertDateTimeStamp}
         onOrganizeLayout={() => handleOrganizeLayout()}
         onToggleAutoOrganize={handleToggleAutoOrganize}
       />
 
-      {/* Toast Notification */}
+      {/* Toast Notification (positioned cleanly below formatting bar when active) */}
       {toastMsg && (
-        <div className="fixed top-16 right-5 z-50 px-3.5 py-2 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium shadow-lg border border-slate-700 pointer-events-none">
+        <div
+          className={`fixed right-3 sm:right-5 z-50 px-3.5 py-2 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium shadow-lg border border-slate-700 pointer-events-none max-w-[calc(100vw-24px)] ${
+            selectedNode ? 'top-[120px]' : 'top-16'
+          }`}
+        >
           {toastMsg}
         </div>
       )}
@@ -1171,23 +1287,22 @@ export default function App() {
           wsConnected={wsConnected}
           e2eeEnabled={e2eeEnabled}
           roomKeyBase64={roomKeyBase64}
+          keyFingerprint={keyFingerprint}
           peers={peers}
           onUpdateProfile={handleUpdateProfile}
           onJoinRoom={handleJoinRoom}
+          onSetPassphrase={handleSetPassphrase}
           onClose={() => setShowCollab(false)}
         />
       )}
 
-      {(showEncryption || isLockedNeedsPassphrase) && (
+      {showEncryption && (
         <EncryptionModal
           e2eeEnabled={e2eeEnabled}
           keyFingerprint={keyFingerprint}
-          isLockedNeedsPassphrase={isLockedNeedsPassphrase}
-          decryptError={decryptError}
           onToggleE2ee={handleToggleE2ee}
-          onSetPassphrase={handleSetPassphrase}
           onRotateRandomKey={handleRotateRandomKey}
-          onUnlockWithPassphrase={handleUnlockWithPassphrase}
+          onOpenCollaboration={() => setShowCollab(true)}
           onClose={() => setShowEncryption(false)}
         />
       )}

@@ -87,7 +87,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-5"
+        className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-5 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -100,6 +100,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Tutup"
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <X className="w-4 h-4" />
@@ -122,7 +123,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
               disabled={loading}
               className="w-full py-3 px-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors flex items-center justify-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200"
             >
-              <Upload className="w-4 h-4 text-blue-600" />
+              <Upload className="w-4 h-4 text-blue-600 shrink-0" />
               <span>{loading ? 'Mengompres gambar...' : 'Unggah Gambar dari Perangkat (Terenkripsi E2EE)'}</span>
             </button>
           </div>
@@ -133,13 +134,13 @@ export const MediaModal: React.FC<MediaModalProps> = ({
               Atau Tautan URL Gambar
             </label>
             <div className="relative">
-              <Link2 className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Link2 className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 value={url.startsWith('data:') ? '' : url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://..."
-                className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full h-9 pl-8 pr-3 text-xs leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
           </div>
@@ -166,7 +167,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               placeholder="Contoh: Arsitektur alur pengguna v2"
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full h-9 px-3 text-xs leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 

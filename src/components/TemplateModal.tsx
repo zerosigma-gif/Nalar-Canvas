@@ -87,7 +87,6 @@ const TemplateSchematic: React.FC<{ id: TemplateId }> = ({ id }) => {
       </svg>
     );
   }
-  // Mind Mapping
   return (
     <svg viewBox="0 0 180 90" className="w-full h-24">
       <path d="M90 45 C65 45, 55 22, 34 22" fill="none" stroke="#059669" strokeWidth="1.8" />
@@ -111,87 +110,92 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
 }) => {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 backdrop-blur-xs p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 backdrop-blur-xs p-3 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 max-h-[88vh] overflow-y-auto"
+        className="w-full max-w-4xl rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 mb-5">
+        <div className="px-5 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-4 shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-              Template Model Percabangan Brainstorming
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100">
+              Template Percabangan Brainstorming
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Pilih kerangka berpikir terstruktur untuk langsung mengisi kanvas dan mulai memetakan ide.
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Pilih kerangka berpikir untuk menata ulang ide yang ada atau memuat contoh baru ke kanvas.
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            aria-label="Tutup Menu Template"
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {TEMPLATE_CATALOG.map((tpl) => {
-            const active = tpl.id === currentTemplateId;
-            return (
-              <div
-                key={tpl.id}
-                className={`text-left rounded-xl border p-4 transition-all flex flex-col justify-between ${
-                  active
-                    ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/25'
-                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/50'
-                }`}
-              >
-                <div>
-                  <div className="rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 mb-3 p-2">
-                    <TemplateSchematic id={tpl.id} />
+        <div className="p-5 sm:p-6 overflow-y-auto flex-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {TEMPLATE_CATALOG.map((tpl) => {
+              const active = tpl.id === currentTemplateId;
+              return (
+                <div
+                  key={tpl.id}
+                  className={`text-left rounded-xl border p-4 transition-all flex flex-col justify-between ${
+                    active
+                      ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/25'
+                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/50'
+                  }`}
+                >
+                  <div>
+                    <div className="rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 mb-3 p-2">
+                      <TemplateSchematic id={tpl.id} />
+                    </div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      {tpl.name}
+                    </div>
+                    <div className="text-[11px] font-medium text-blue-600 dark:text-blue-400 mt-0.5">
+                      {tpl.subtitle}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                      {tpl.description}
+                    </p>
                   </div>
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    {tpl.name}
-                  </div>
-                  <div className="text-[11px] font-medium text-blue-600 dark:text-blue-400 mt-0.5">
-                    {tpl.subtitle}
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
-                    {tpl.description}
-                  </p>
-                </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onRealignToTemplate(tpl.id);
-                      onClose();
-                    }}
-                    className="w-full py-1.5 px-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
-                  >
-                    <Workflow className="w-3.5 h-3.5" />
-                    <span>Susun Node Saat Ini ke Pola Ini</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onApplyTemplate(tpl.id);
-                      onClose();
-                    }}
-                    className="w-full py-1.5 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium transition-colors inline-flex items-center justify-between whitespace-nowrap"
-                  >
-                    <span>{active ? 'Muat Ulang Contoh' : 'Muat Contoh Template'}</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onRealignToTemplate(tpl.id);
+                        onClose();
+                      }}
+                      className="w-full py-2 px-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                    >
+                      <Workflow className="w-3.5 h-3.5" />
+                      <span>Susun Node Saat Ini ke Pola Ini</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onApplyTemplate(tpl.id);
+                        onClose();
+                      }}
+                      className="w-full py-2 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium transition-colors inline-flex items-center justify-between whitespace-nowrap"
+                    >
+                      <span>{active ? 'Muat Ulang Contoh' : 'Muat Contoh Template'}</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
   );
 };
+
+

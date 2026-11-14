@@ -77,6 +77,13 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     | null
   >(null);
 
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{
+    initialDist: number;
+    initialZoom: number;
+    worldCenter: { x: number; y: number };
+  } | null>(null);
+
   // Track keyboard Space for temporary pan
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -189,6 +196,23 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   };
 
   const handleCanvasPointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') {
+      activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activePointersRef.current.size === 2) {
+        const pts = Array.from(activePointersRef.current.values());
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const midX = (pts[0].x + pts[1].x) / 2;
+        const midY = (pts[0].y + pts[1].y) / 2;
+        pinchRef.current = {
+          initialDist: Math.max(10, dist),
+          initialZoom: zoom,
+          worldCenter: toWorldCoords(midX, midY),
+        };
+        dragRef.current = null;
+        return;
+      }
+    }
+
     const isMiddle = e.button === 1;
     if (tool === 'pan' || spacePressed || isMiddle) {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -234,6 +258,31 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   );
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch' && activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activePointersRef.current.size === 2 && pinchRef.current) {
+        const pts = Array.from(activePointersRef.current.values());
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const midX = (pts[0].x + pts[1].x) / 2;
+        const midY = (pts[0].y + pts[1].y) / 2;
+        const rect = containerRef.current?.getBoundingClientRect();
+        const offsetX = rect ? midX - rect.left : midX;
+        const offsetY = rect ? midY - rect.top : midY;
+        const nextZoom = Math.min(
+          2.5,
+          Math.max(0.25, pinchRef.current.initialZoom * (dist / pinchRef.current.initialDist))
+        );
+        onChangePanZoom(
+          {
+            x: offsetX - pinchRef.current.worldCenter.x * nextZoom,
+            y: offsetY - pinchRef.current.worldCenter.y * nextZoom,
+          },
+          nextZoom
+        );
+        return;
+      }
+    }
+
     const worldPos = toWorldCoords(e.clientX, e.clientY);
     onCursorMove(worldPos);
 
@@ -252,6 +301,13 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') {
+      activePointersRef.current.delete(e.pointerId);
+      if (activePointersRef.current.size < 2) {
+        pinchRef.current = null;
+      }
+    }
+
     const active = dragRef.current;
     if (!active) return;
     if (active.mode === 'node') {
@@ -285,13 +341,14 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
       onPointerDown={handleCanvasPointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
       onPointerLeave={() => onCursorMove(null)}
       style={{
         backgroundImage: `radial-gradient(circle, ${dotColor} 1.15px, transparent 1.15px)`,
         backgroundSize: `${gridSize}px ${gridSize}px`,
         backgroundPosition: `${pan.x}px ${pan.y}px`,
       }}
-      className={`relative w-full h-full overflow-hidden bg-slate-50 dark:bg-[#0B1120] ${
+      className={`relative w-full h-full overflow-hidden touch-none bg-slate-50 dark:bg-[#0B1120] ${
         tool === 'pan' || spacePressed
           ? 'cursor-grab active:cursor-grabbing'
           : tool === 'connect'

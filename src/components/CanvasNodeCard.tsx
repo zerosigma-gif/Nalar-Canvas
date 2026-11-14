@@ -196,8 +196,13 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
               e.stopPropagation();
               setEditing((v) => !v);
             }}
-            className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-opacity shrink-0"
+            className={`p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-opacity shrink-0 ${
+              isSelected || editing
+                ? 'opacity-100'
+                : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+            }`}
             title={editing ? 'Selesai Edit' : 'Edit Teks'}
+            aria-label={editing ? 'Selesai Edit' : 'Edit Teks'}
           >
             {editing ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Pencil className="w-3.5 h-3.5" />}
           </button>
