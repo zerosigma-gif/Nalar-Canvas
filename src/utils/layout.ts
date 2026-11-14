@@ -612,3 +612,71 @@ export function organizeBoardByTemplate(
     updatedAt: Date.now(),
   };
 }
+
+export function buildPresentationOrder(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  templateId: TemplateId
+): CanvasNode[] {
+  if (nodes.length === 0) return [];
+
+  // Filter out collapsed descendants so presentation follows visible nodes
+  const rawChildren = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (n.parentId) {
+      const list = rawChildren.get(n.parentId) ?? [];
+      list.push(n.id);
+      rawChildren.set(n.parentId, list);
+    }
+  }
+  const hiddenIds = new Set<string>();
+  const hideSubtree = (pid: string) => {
+    for (const k of rawChildren.get(pid) ?? []) {
+      if (!hiddenIds.has(k)) {
+        hiddenIds.add(k);
+        hideSubtree(k);
+      }
+    }
+  };
+  for (const n of nodes) {
+    if (n.collapsed) hideSubtree(n.id);
+  }
+
+  const visibleNodes = nodes.filter((n) => !hiddenIds.has(n.id));
+  const graph = buildHierarchy(visibleNodes, edges, templateId);
+  const visited = new Set<string>();
+  const ordered: CanvasNode[] = [];
+
+  const sortIds = (ids: string[]) =>
+    [...ids].sort((a, b) => {
+      const na = graph.nodeMap.get(a);
+      const nb = graph.nodeMap.get(b);
+      if (!na || !nb) return 0;
+      if (Math.abs(na.y - nb.y) > 24) return na.y - nb.y;
+      return na.x - nb.x;
+    });
+
+  const walk = (id: string) => {
+    if (visited.has(id)) return;
+    const node = graph.nodeMap.get(id);
+    if (!node) return;
+    visited.add(id);
+    ordered.push(node);
+    const kids = sortIds(graph.childrenMap.get(id) ?? []);
+    for (const kid of kids) {
+      walk(kid);
+    }
+  };
+
+  for (const rootId of sortIds(graph.roots)) {
+    walk(rootId);
+  }
+
+  for (const n of visibleNodes) {
+    if (!visited.has(n.id)) {
+      walk(n.id);
+    }
+  }
+
+  return ordered;
+}

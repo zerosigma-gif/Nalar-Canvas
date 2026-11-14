@@ -14,6 +14,7 @@ interface CanvasWorkspaceProps {
   templateId: TemplateId;
   selectedNodeId: string | null;
   connectSourceId: string | null;
+  isPresenting?: boolean;
   tool: InteractionTool;
   darkMode: boolean;
   pan: { x: number; y: number };
@@ -37,6 +38,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   templateId,
   selectedNodeId,
   connectSourceId,
+  isPresenting = false,
   tool,
   darkMode,
   pan,
@@ -56,6 +58,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [spacePressed, setSpacePressed] = useState(false);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
 
   const dragRef = useRef<
     | {
@@ -215,6 +218,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     const isMiddle = e.button === 1;
     if (tool === 'pan' || spacePressed || isMiddle) {
       e.currentTarget.setPointerCapture(e.pointerId);
+      setIsDraggingCanvas(true);
       dragRef.current = {
         mode: 'pan',
         startX: e.clientX,
@@ -226,9 +230,10 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     }
 
     if (e.button === 0) {
-      onSelectNode(null);
+      if (!isPresenting) onSelectNode(null);
       // Allow dragging empty canvas to pan smoothly
       e.currentTarget.setPointerCapture(e.pointerId);
+      setIsDraggingCanvas(true);
       dragRef.current = {
         mode: 'pan',
         startX: e.clientX,
@@ -241,9 +246,11 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
 
   const handleStartNodeDrag = useCallback(
     (e: React.PointerEvent, nodeId: string) => {
+      if (isPresenting) return;
       const node = nodes.find((n) => n.id === nodeId);
       if (!node) return;
       containerRef.current?.setPointerCapture(e.pointerId);
+      setIsDraggingCanvas(true);
       dragRef.current = {
         mode: 'node',
         nodeId,
@@ -253,7 +260,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
         origNodeY: node.y,
       };
     },
-    [nodes]
+    [isPresenting, nodes]
   );
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -307,6 +314,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
       }
     }
 
+    setIsDraggingCanvas(false);
     const active = dragRef.current;
     if (!active) return;
     if (active.mode === 'node') {
@@ -361,7 +369,9 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
           transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
           transformOrigin: '0 0',
         }}
-        className="absolute top-0 left-0 w-0 h-0 will-change-transform"
+        className={`absolute top-0 left-0 w-0 h-0 will-change-transform ${
+          isPresenting && !isDraggingCanvas ? 'transition-transform duration-500 ease-out' : ''
+        }`}
       >
         {/* SVG Edges Layer */}
         <svg
@@ -443,53 +453,55 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
                   strokeLinecap="round"
                   className="transition-colors pointer-events-none"
                 />
-                {/* Always-accessible line trash can icon button on connecting line */}
-                <g
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Hapus garis penghubung"
-                  transform={`translate(${midX}, ${midY}) scale(${isHovered ? 1.12 : 1})`}
-                  style={{ pointerEvents: 'all' }}
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteEdge(edge.id);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
+                {/* Always-accessible line trash can icon button on connecting line (hidden during presentation) */}
+                {!isPresenting && (
+                  <g
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Hapus garis penghubung"
+                    transform={`translate(${midX}, ${midY}) scale(${isHovered ? 1.12 : 1})`}
+                    style={{ pointerEvents: 'all' }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
                       e.stopPropagation();
                       onDeleteEdge(edge.id);
-                    }
-                  }}
-                  onMouseEnter={() => setHoveredEdgeId(edge.id)}
-                  onMouseLeave={() => setHoveredEdgeId(null)}
-                  className="cursor-pointer"
-                >
-                  <title>Hapus garis penghubung</title>
-                  <circle r={16} fill="transparent" />
-                  <circle
-                    r={11}
-                    fill={isHovered ? '#EF4444' : darkMode ? '#0F172A' : '#FFFFFF'}
-                    stroke={isHovered ? '#DC2626' : darkMode ? '#991B1B' : '#FCA5A5'}
-                    strokeWidth={1.4}
-                  />
-                  <g
-                    fill="none"
-                    stroke={isHovered ? '#FFFFFF' : '#EF4444'}
-                    strokeWidth={1.5}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onDeleteEdge(edge.id);
+                      }
+                    }}
+                    onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                    onMouseLeave={() => setHoveredEdgeId(null)}
+                    className="cursor-pointer"
                   >
-                    <path d="M-4.5 -2.8 H4.5" />
-                    <path d="M-1.8 -2.8 V-4.2 C-1.8 -4.55 -1.55 -4.8 -1.2 -4.8 H1.2 C1.55 -4.8 1.8 -4.55 1.8 -4.2 V-2.8" />
-                    <path d="M-3.4 -2.8 L-2.85 3.9 C-2.8 4.4 -2.38 4.8 -1.85 4.8 H1.85 C2.38 4.8 2.8 4.4 2.85 3.9 L3.4 -2.8" />
-                    <line x1="-1.1" y1="-0.6" x2="-1.1" y2="2.6" />
-                    <line x1="1.1" y1="-0.6" x2="1.1" y2="2.6" />
+                    <title>Hapus garis penghubung</title>
+                    <circle r={16} fill="transparent" />
+                    <circle
+                      r={11}
+                      fill={isHovered ? '#EF4444' : darkMode ? '#0F172A' : '#FFFFFF'}
+                      stroke={isHovered ? '#DC2626' : darkMode ? '#991B1B' : '#FCA5A5'}
+                      strokeWidth={1.4}
+                    />
+                    <g
+                      fill="none"
+                      stroke={isHovered ? '#FFFFFF' : '#EF4444'}
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M-4.5 -2.8 H4.5" />
+                      <path d="M-1.8 -2.8 V-4.2 C-1.8 -4.55 -1.55 -4.8 -1.2 -4.8 H1.2 C1.55 -4.8 1.8 -4.55 1.8 -4.2 V-2.8" />
+                      <path d="M-3.4 -2.8 L-2.85 3.9 C-2.8 4.4 -2.38 4.8 -1.85 4.8 H1.85 C2.38 4.8 2.8 4.4 2.85 3.9 L3.4 -2.8" />
+                      <line x1="-1.1" y1="-0.6" x2="-1.1" y2="2.6" />
+                      <line x1="1.1" y1="-0.6" x2="1.1" y2="2.6" />
+                    </g>
                   </g>
-                </g>
+                )}
               </g>
             );
           })}
@@ -506,6 +518,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
               node={node}
               isSelected={selectedNodeId === node.id}
               isConnectSource={connectSourceId === node.id}
+              isPresenting={isPresenting}
               tool={tool}
               zoom={zoom}
               darkMode={darkMode}

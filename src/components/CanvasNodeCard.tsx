@@ -20,6 +20,7 @@ interface CanvasNodeCardProps {
   node: CanvasNode;
   isSelected: boolean;
   isConnectSource: boolean;
+  isPresenting?: boolean;
   tool: InteractionTool;
   zoom: number;
   darkMode: boolean;
@@ -37,6 +38,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
   node,
   isSelected,
   isConnectSource,
+  isPresenting = false,
   tool,
   darkMode,
   childCount,
@@ -72,6 +74,11 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
       : node.style.color || '#0F172A';
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (isPresenting) {
+      e.stopPropagation();
+      onSelect(node.id, false);
+      return;
+    }
     if (tool === 'pan') return;
     e.stopPropagation();
     if (tool === 'connect') {
@@ -106,12 +113,22 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
       onPointerDown={handlePointerDown}
       onDoubleClick={(e) => {
         e.stopPropagation();
-        setEditing(true);
+        if (!isPresenting) setEditing(true);
       }}
-      className={`group absolute top-0 left-0 rounded-xl border transition-shadow select-none ${
-        tool === 'connect' ? 'cursor-crosshair' : editing ? 'cursor-text' : 'cursor-grab active:cursor-grabbing'
+      className={`group absolute top-0 left-0 rounded-xl border transition-all duration-300 select-none ${
+        isPresenting
+          ? 'cursor-pointer'
+          : tool === 'connect'
+          ? 'cursor-crosshair'
+          : editing
+          ? 'cursor-text'
+          : 'cursor-grab active:cursor-grabbing'
       } ${
-        isSelected
+        isPresenting
+          ? isSelected
+            ? 'ring-4 ring-blue-500/45 shadow-xl z-30 opacity-100'
+            : 'shadow-sm z-10 opacity-50 hover:opacity-85'
+          : isSelected
           ? 'ring-2 ring-blue-500/35 shadow-md z-20'
           : 'shadow-sm hover:shadow-md z-10'
       }`}
@@ -189,23 +206,25 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
             )}
           </div>
 
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditing((v) => !v);
-            }}
-            className={`p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-opacity shrink-0 ${
-              isSelected || editing
-                ? 'opacity-100'
-                : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
-            }`}
-            title={editing ? 'Selesai Edit' : 'Edit Teks'}
-            aria-label={editing ? 'Selesai Edit' : 'Edit Teks'}
-          >
-            {editing ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Pencil className="w-3.5 h-3.5" />}
-          </button>
+          {!isPresenting && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditing((v) => !v);
+              }}
+              className={`p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-opacity shrink-0 ${
+                isSelected || editing
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+              }`}
+              title={editing ? 'Selesai Edit' : 'Edit Teks'}
+              aria-label={editing ? 'Selesai Edit' : 'Edit Teks'}
+            >
+              {editing ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Pencil className="w-3.5 h-3.5" />}
+            </button>
+          )}
         </div>
 
         {/* Body text */}
@@ -330,39 +349,43 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
       </div>
 
       {/* Floating Quick-Branch & Connect Handles on Hover/Selection */}
-      <button
-        type="button"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSpawnChild(node.id);
-        }}
-        title="Tambah Cabang Ide Anak"
-        className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 shadow-sm flex items-center justify-center text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all ${
-          isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100'
-        }`}
-      >
-        <GitBranchPlus className="w-3.5 h-3.5" />
-      </button>
+      {!isPresenting && (
+        <>
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSpawnChild(node.id);
+            }}
+            title="Tambah Cabang Ide Anak"
+            className={`absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 shadow-sm flex items-center justify-center text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all ${
+              isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100'
+            }`}
+          >
+            <GitBranchPlus className="w-3.5 h-3.5" />
+          </button>
 
-      <button
-        type="button"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          onConnectClick(node.id);
-        }}
-        title="Hubungkan ke Node Lain"
-        className={`absolute left-1/2 -bottom-3.5 -translate-x-1/2 w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 shadow-sm flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all ${
-          isConnectSource
-            ? 'opacity-100 bg-emerald-600 text-white border-emerald-600'
-            : isSelected || tool === 'connect'
-            ? 'opacity-100'
-            : 'opacity-0 group-hover:opacity-100'
-        }`}
-      >
-        <Link2 className="w-3.5 h-3.5" />
-      </button>
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onConnectClick(node.id);
+            }}
+            title="Hubungkan ke Node Lain"
+            className={`absolute left-1/2 -bottom-3.5 -translate-x-1/2 w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 shadow-sm flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all ${
+              isConnectSource
+                ? 'opacity-100 bg-emerald-600 text-white border-emerald-600'
+                : isSelected || tool === 'connect'
+                ? 'opacity-100'
+                : 'opacity-0 group-hover:opacity-100'
+            }`}
+          >
+            <Link2 className="w-3.5 h-3.5" />
+          </button>
+        </>
+      )}
     </div>
   );
 };

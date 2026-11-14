@@ -26,11 +26,13 @@ interface TopBarProps {
   wsConnected: boolean;
   e2eeEnabled: boolean;
   darkMode: boolean;
+  canPresent: boolean;
   exportingFormat: ExportFormat | null;
   onChangeTitle: (nextTitle: string) => void;
   onOpenTemplates: () => void;
   onOpenCollaboration: () => void;
   onOpenEncryption: () => void;
+  onStartPresentation: () => void;
   onToggleTheme: () => void;
   onExport: (format: ExportFormat) => void;
 }
@@ -42,11 +44,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   wsConnected,
   e2eeEnabled,
   darkMode,
+  canPresent,
   exportingFormat,
   onChangeTitle,
   onOpenTemplates,
   onOpenCollaboration,
   onOpenEncryption,
+  onStartPresentation,
   onToggleTheme,
   onExport,
 }) => {
@@ -224,10 +228,40 @@ export const TopBar: React.FC<TopBarProps> = ({
                     {e2eeEnabled ? 'Aktif' : 'Nonaktif'}
                   </span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onStartPresentation();
+                  }}
+                  className="w-full min-h-[44px] px-3 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
+                >
+                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    <Presentation className="w-4 h-4 text-blue-600" />
+                    <span>Mode Presentasi</span>
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    {canPresent ? 'Fokus berurutan' : 'Kosong'}
+                  </span>
+                </button>
               </div>
             </>
           )}
         </div>
+
+        <button
+          type="button"
+          onClick={onStartPresentation}
+          title="Mode Presentasi (P) — Sembunyikan semua toolbar & fokus node berurutan"
+          className={`hidden md:inline-flex h-9 px-3 rounded-lg border text-xs font-semibold transition-colors items-center gap-1.5 whitespace-nowrap shrink-0 ${
+            canPresent
+              ? 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700'
+              : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'
+          }`}
+        >
+          <Presentation className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+          <span>Presentasi</span>
+        </button>
 
         <button
           type="button"

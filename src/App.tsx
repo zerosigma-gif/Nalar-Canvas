@@ -13,6 +13,7 @@ import { EncryptionModal } from './components/EncryptionModal';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { MediaModal } from './components/MediaModal';
 import { NodeFormattingBar } from './components/NodeFormattingBar';
+import { PresentationHud } from './components/PresentationHud';
 import { TemplateModal } from './components/TemplateModal';
 import { ExportFormat, TopBar } from './components/TopBar';
 import {
@@ -48,7 +49,11 @@ import {
   createDefaultTable,
   formatStamp,
 } from './utils/templates';
-import { organizeBoardByTemplate } from './utils/layout';
+import {
+  buildPresentationOrder,
+  estimateNodeHeight,
+  organizeBoardByTemplate,
+} from './utils/layout';
 
 function getInitialRoomId(): string {
   const params = new URLSearchParams(window.location.search);
@@ -116,6 +121,11 @@ export default function App() {
   const [showEncryption, setShowEncryption] = useState(false);
   const [mediaModalNodeId, setMediaModalNodeId] = useState<string | null>(null);
   const [pendingMediaNewNode, setPendingMediaNewNode] = useState(false);
+
+  // Presentation Mode
+  const [isPresenting, setIsPresenting] = useState(false);
+  const [presentationAutoPlay, setPresentationAutoPlay] = useState(false);
+  const prePresentViewportRef = useRef<{ pan: { x: number; y: number }; zoom: number } | null>(null);
 
   // Export & Toast Feedback
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
@@ -837,6 +847,104 @@ export default function App() {
     });
   }, [commitBoardChange, handleFitView, showToast]);
 
+  // Presentation Mode: sequential node ordering & camera focus
+  const presentationOrder = useMemo(
+    () => buildPresentationOrder(board.nodes, board.edges, board.templateId),
+    [board.edges, board.nodes, board.templateId]
+  );
+
+  const presentationIndex = useMemo(() => {
+    if (presentationOrder.length === 0) return -1;
+    const idx = selectedNodeId ? presentationOrder.findIndex((n) => n.id === selectedNodeId) : -1;
+    return idx >= 0 ? idx : 0;
+  }, [presentationOrder, selectedNodeId]);
+
+  const focusNodeInViewport = useCallback((node: CanvasNode) => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const nodeW = node.width || 248;
+    const nodeH = estimateNodeHeight(node);
+    const marginX = vw < 640 ? 44 : 160;
+    const marginY = vh < 640 ? 156 : 190;
+    const availW = Math.max(220, vw - marginX);
+    const availH = Math.max(180, vh - marginY);
+    const fitZoom = Math.min(availW / (nodeW + 56), availH / (nodeH + 56));
+    const targetZoom = Math.min(2.15, Math.max(0.8, Number(fitZoom.toFixed(2))));
+
+    const nodeCenterX = node.x + nodeW / 2;
+    const nodeCenterY = node.y + nodeH / 2;
+    const safeCenterY = (vh - 68) / 2;
+
+    setZoom(targetZoom);
+    setPan({
+      x: vw / 2 - nodeCenterX * targetZoom,
+      y: safeCenterY - nodeCenterY * targetZoom,
+    });
+  }, []);
+
+  const handleStartPresentation = useCallback(() => {
+    if (presentationOrder.length === 0) {
+      showToast('Tambahkan minimal satu node terlebih dahulu untuk memulai presentasi.');
+      return;
+    }
+    prePresentViewportRef.current = { pan, zoom };
+    const startNode =
+      (selectedNodeId ? presentationOrder.find((n) => n.id === selectedNodeId) : null) ??
+      presentationOrder[0];
+
+    setShowTemplates(false);
+    setShowCollab(false);
+    setShowEncryption(false);
+    setMediaModalNodeId(null);
+    setConnectSourceId(null);
+    setTool('select');
+    setPresentationAutoPlay(false);
+    setIsPresenting(true);
+    setSelectedNodeId(startNode.id);
+    focusNodeInViewport(startNode);
+  }, [focusNodeInViewport, pan, presentationOrder, selectedNodeId, showToast, zoom]);
+
+  const handleExitPresentation = useCallback(() => {
+    setIsPresenting(false);
+    setPresentationAutoPlay(false);
+    if (prePresentViewportRef.current) {
+      setPan(prePresentViewportRef.current.pan);
+      setZoom(prePresentViewportRef.current.zoom);
+      prePresentViewportRef.current = null;
+    }
+  }, []);
+
+  const handleStepPresentation = useCallback(
+    (delta: -1 | 1) => {
+      if (presentationOrder.length === 0) return;
+      const baseIdx = presentationIndex >= 0 ? presentationIndex : 0;
+      const nextIdx = (baseIdx + delta + presentationOrder.length) % presentationOrder.length;
+      const nextNode = presentationOrder[nextIdx];
+      setSelectedNodeId(nextNode.id);
+      focusNodeInViewport(nextNode);
+    },
+    [focusNodeInViewport, presentationIndex, presentationOrder]
+  );
+
+  const handleSelectNode = useCallback(
+    (nodeId: string | null) => {
+      setSelectedNodeId(nodeId);
+      if (isPresenting && nodeId) {
+        const target = boardRef.current.nodes.find((n) => n.id === nodeId);
+        if (target) focusNodeInViewport(target);
+      }
+    },
+    [focusNodeInViewport, isPresenting]
+  );
+
+  useEffect(() => {
+    if (!isPresenting || !presentationAutoPlay || presentationOrder.length <= 1) return;
+    const timer = window.setInterval(() => {
+      handleStepPresentation(1);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [handleStepPresentation, isPresenting, presentationAutoPlay, presentationOrder.length]);
+
   // Save Visual Media to existing or newly created node
   const handleSaveMedia = useCallback(
     (media: MediaAttachment | null) => {
@@ -918,6 +1026,30 @@ export default function App() {
 
       if (isInput) return;
 
+      if (isPresenting) {
+        if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
+          e.preventDefault();
+          handleExitPresentation();
+        } else if (
+          e.key === 'ArrowRight' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'PageDown' ||
+          e.key === ' ' ||
+          e.key === 'Enter'
+        ) {
+          e.preventDefault();
+          handleStepPresentation(1);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+          e.preventDefault();
+          handleStepPresentation(-1);
+        }
+        return;
+      }
+
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        handleStartPresentation();
+      }
       if (e.key === 'v' || e.key === 'V') setTool('select');
       if (e.key === 'h' || e.key === 'H') setTool('pan');
       if (e.key === 'c' || e.key === 'C') setTool('connect');
@@ -949,12 +1081,16 @@ export default function App() {
   }, [
     handleAddFloatingNode,
     handleDeleteNode,
+    handleExitPresentation,
     handleOrganizeLayout,
     handleRedo,
     handleSpawnChild,
+    handleStartPresentation,
+    handleStepPresentation,
     handleUndo,
     handleZoomIn,
     handleZoomOut,
+    isPresenting,
     selectedNodeId,
   ]);
 
@@ -1175,29 +1311,33 @@ export default function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-slate-100">
-      <TopBar
-        title={board.title}
-        roomId={roomId}
-        peerCount={Math.max(1, peers.length)}
-        wsConnected={wsConnected}
-        e2eeEnabled={e2eeEnabled}
-        darkMode={darkMode}
-        exportingFormat={exportingFormat}
-        onChangeTitle={(title) =>
-          commitBoardChange((prev) => ({
-            ...prev,
-            title,
-          }))
-        }
-        onOpenTemplates={() => setShowTemplates(true)}
-        onOpenCollaboration={() => setShowCollab(true)}
-        onOpenEncryption={() => setShowEncryption(true)}
-        onToggleTheme={() => setDarkMode((d) => !d)}
-        onExport={handleExport}
-      />
+      {!isPresenting && (
+        <TopBar
+          title={board.title}
+          roomId={roomId}
+          peerCount={Math.max(1, peers.length)}
+          wsConnected={wsConnected}
+          e2eeEnabled={e2eeEnabled}
+          darkMode={darkMode}
+          canPresent={presentationOrder.length > 0}
+          exportingFormat={exportingFormat}
+          onChangeTitle={(title) =>
+            commitBoardChange((prev) => ({
+              ...prev,
+              title,
+            }))
+          }
+          onOpenTemplates={() => setShowTemplates(true)}
+          onOpenCollaboration={() => setShowCollab(true)}
+          onOpenEncryption={() => setShowEncryption(true)}
+          onStartPresentation={handleStartPresentation}
+          onToggleTheme={() => setDarkMode((d) => !d)}
+          onExport={handleExport}
+        />
+      )}
 
       {/* Contextual Rich Formatting Dock when a node is selected */}
-      {selectedNode && (
+      {!isPresenting && selectedNode && (
         <NodeFormattingBar
           node={selectedNode}
           onUpdateNode={handleUpdateNode}
@@ -1212,33 +1352,36 @@ export default function App() {
       )}
 
       {/* Left Floating Creation & Navigation Toolbar (Desktop rail / Mobile launcher) */}
-      <FloatingToolbar
-        tool={tool}
-        canUndo={past.length > 0}
-        canRedo={future.length > 0}
-        onSelectTool={(t) => {
-          setTool(t);
-          if (t !== 'connect') setConnectSourceId(null);
-        }}
-        onAddFloatingNode={handleAddFloatingNode}
-        onAddTableNode={handleAddTableNode}
-        onAddMediaNode={() => {
-          setPendingMediaNewNode(true);
-          setMediaModalNodeId('__new__');
-        }}
-        onAddStickyNote={handleAddStickyNote}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-      />
+      {!isPresenting && (
+        <FloatingToolbar
+          tool={tool}
+          canUndo={past.length > 0}
+          canRedo={future.length > 0}
+          onSelectTool={(t) => {
+            setTool(t);
+            if (t !== 'connect') setConnectSourceId(null);
+          }}
+          onAddFloatingNode={handleAddFloatingNode}
+          onAddTableNode={handleAddTableNode}
+          onAddMediaNode={() => {
+            setPendingMediaNewNode(true);
+            setMediaModalNodeId('__new__');
+          }}
+          onAddStickyNote={handleAddStickyNote}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+        />
+      )}
 
       {/* Infinite Floating Workspace Canvas */}
-      <main className="w-full h-full pt-14">
+      <main className={isPresenting ? 'w-full h-full' : 'w-full h-full pt-14'}>
         <CanvasWorkspace
           nodes={board.nodes}
           edges={board.edges}
           templateId={board.templateId}
           selectedNodeId={selectedNodeId}
           connectSourceId={connectSourceId}
+          isPresenting={isPresenting}
           tool={tool}
           darkMode={darkMode}
           pan={pan}
@@ -1249,7 +1392,7 @@ export default function App() {
             setPan(nextPan);
             setZoom(nextZoom);
           }}
-          onSelectNode={setSelectedNodeId}
+          onSelectNode={handleSelectNode}
           onMoveNode={handleMoveNode}
           onUpdateNode={handleUpdateNode}
           onSpawnChild={handleSpawnChild}
@@ -1264,35 +1407,59 @@ export default function App() {
       </main>
 
       {/* Floating Canvas Minimap */}
-      <CanvasMinimap
-        nodes={board.nodes}
-        edges={board.edges}
-        selectedNodeId={selectedNodeId}
-        pan={pan}
-        zoom={zoom}
-        darkMode={darkMode}
-        onJumpToPan={(nextPan) => setPan(nextPan)}
-      />
+      {!isPresenting && (
+        <CanvasMinimap
+          nodes={board.nodes}
+          edges={board.edges}
+          selectedNodeId={selectedNodeId}
+          pan={pan}
+          zoom={zoom}
+          darkMode={darkMode}
+          onJumpToPan={(nextPan) => setPan(nextPan)}
+        />
+      )}
 
       {/* Bottom Floating Bar: Parallel Day/Time Stamp Input + Zoom Out / Zoom In + Rapikan */}
-      <BottomControlBar
-        zoom={zoom}
-        hasSelectedNode={Boolean(selectedNodeId)}
-        autoOrganize={autoOrganize}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onResetZoom={handleResetZoom}
-        onFitView={handleFitView}
-        onInsertDateTimeStamp={handleInsertDateTimeStamp}
-        onOrganizeLayout={() => handleOrganizeLayout()}
-        onToggleAutoOrganize={handleToggleAutoOrganize}
-      />
+      {!isPresenting && (
+        <BottomControlBar
+          zoom={zoom}
+          hasSelectedNode={Boolean(selectedNodeId)}
+          autoOrganize={autoOrganize}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onResetZoom={handleResetZoom}
+          onFitView={handleFitView}
+          onInsertDateTimeStamp={handleInsertDateTimeStamp}
+          onOrganizeLayout={() => handleOrganizeLayout()}
+          onToggleAutoOrganize={handleToggleAutoOrganize}
+        />
+      )}
+
+      {/* Presentation Mode Minimal Sequential HUD */}
+      {isPresenting && (
+        <PresentationHud
+          currentIndex={presentationIndex}
+          totalCount={presentationOrder.length}
+          activeTitle={
+            presentationIndex >= 0 ? presentationOrder[presentationIndex]?.title ?? '' : ''
+          }
+          autoPlay={presentationAutoPlay}
+          onPrev={() => handleStepPresentation(-1)}
+          onNext={() => handleStepPresentation(1)}
+          onToggleAutoPlay={() => setPresentationAutoPlay((v) => !v)}
+          onFitOverview={() => {
+            setPresentationAutoPlay(false);
+            handleFitView();
+          }}
+          onExit={handleExitPresentation}
+        />
+      )}
 
       {/* Toast Notification (positioned cleanly below formatting bar when active) */}
       {toastMsg && (
         <div
           className={`fixed right-3 sm:right-5 z-50 px-3.5 py-2 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium shadow-lg border border-slate-700 pointer-events-none max-w-[calc(100vw-24px)] ${
-            selectedNode ? 'top-[120px]' : 'top-16'
+            isPresenting ? 'top-4' : selectedNode ? 'top-[120px]' : 'top-16'
           }`}
         >
           {toastMsg}
