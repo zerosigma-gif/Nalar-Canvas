@@ -1,0 +1,1207 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BottomControlBar } from './components/BottomControlBar';
+import { CanvasWorkspace } from './components/CanvasWorkspace';
+import { CollaborationModal } from './components/CollaborationModal';
+import { EncryptionModal } from './components/EncryptionModal';
+import { FloatingToolbar } from './components/FloatingToolbar';
+import { MediaModal } from './components/MediaModal';
+import { NodeFormattingBar } from './components/NodeFormattingBar';
+import { TemplateModal } from './components/TemplateModal';
+import { ExportFormat, TopBar } from './components/TopBar';
+import {
+  BoardDocument,
+  CanvasEdge,
+  CanvasNode,
+  CollaboratorPresence,
+  ConnectorStyle,
+  EncryptedEnvelope,
+  InteractionTool,
+  MediaAttachment,
+  TemplateId,
+} from './types/canvas';
+import {
+  decryptPayload,
+  deriveKeyFromPassphrase,
+  encryptPayload,
+  generateRoomKeyBase64,
+  getKeyFingerprint,
+  importRawRoomKey,
+} from './utils/crypto';
+import {
+  exportAsDocx,
+  exportAsMarkdown,
+  exportAsPdf,
+  exportAsPng,
+  exportAsPptx,
+} from './utils/exports';
+import {
+  buildTemplateBoard,
+  createBlankNode,
+  createDefaultTable,
+  formatStamp,
+} from './utils/templates';
+import { organizeBoardByTemplate } from './utils/layout';
+
+function getInitialRoomId(): string {
+  const params = new URLSearchParams(window.location.search);
+  const existing = params.get('room');
+  if (existing && existing.trim()) return existing.trim();
+  const generated = `ruang-${crypto.randomUUID().slice(0, 6)}`;
+  params.set('room', generated);
+  const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+  window.history.replaceState(null, '', nextUrl);
+  return generated;
+}
+
+function getHashKey(): string | null {
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const match = hash.match(/k=([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+function setHashKey(keyBase64: string | null): void {
+  const url = new URL(window.location.href);
+  url.hash = keyBase64 ? `k=${keyBase64}` : '';
+  window.history.replaceState(null, '', url.toString());
+}
+
+const DEFAULT_USER_COLORS = ['#2563EB', '#059669', '#D97706', '#7C3AED', '#0891B2'];
+
+export default function App() {
+  const [darkMode, setDarkMode] = useState(false);
+  const [roomId, setRoomId] = useState<string>(() => getInitialRoomId());
+  const [clientId] = useState<string>(() => `user-${crypto.randomUUID().slice(0, 8)}`);
+  const [userName, setUserName] = useState<string>(() => `Kreator-${Math.floor(100 + Math.random() * 900)}`);
+  const [userColor, setUserColor] = useState<string>(
+    () => DEFAULT_USER_COLORS[Math.floor(Math.random() * DEFAULT_USER_COLORS.length)]
+  );
+
+  // Board & History
+  const [board, setBoard] = useState<BoardDocument>(() => buildTemplateBoard('mind-mapping', roomId));
+  const [past, setPast] = useState<BoardDocument[]>([]);
+  const [future, setFuture] = useState<BoardDocument[]>([]);
+
+  // Viewport
+  const [pan, setPan] = useState<{ x: number; y: number }>(() => ({
+    x: typeof window !== 'undefined' ? window.innerWidth / 2 : 700,
+    y: typeof window !== 'undefined' ? window.innerHeight / 2 : 420,
+  }));
+  const [zoom, setZoom] = useState(1);
+
+  // Tools & Selection
+  const [tool, setTool] = useState<InteractionTool>('select');
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [connectSourceId, setConnectSourceId] = useState<string | null>(null);
+  const [autoOrganize, setAutoOrganize] = useState<boolean>(false);
+  const autoOrganizeRef = useRef(autoOrganize);
+  autoOrganizeRef.current = autoOrganize;
+
+  // Modals
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showCollab, setShowCollab] = useState(false);
+  const [showEncryption, setShowEncryption] = useState(false);
+  const [mediaModalNodeId, setMediaModalNodeId] = useState<string | null>(null);
+  const [pendingMediaNewNode, setPendingMediaNewNode] = useState(false);
+
+  // Export & Toast Feedback
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // E2EE State
+  const [e2eeEnabled, setE2eeEnabled] = useState(true);
+  const [roomKeyBase64, setRoomKeyBase64] = useState<string | null>(null);
+  const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null);
+  const [keyFingerprint, setKeyFingerprint] = useState<string | null>(null);
+  const [pendingEncryptedEnvelope, setPendingEncryptedEnvelope] =
+    useState<EncryptedEnvelope | null>(null);
+  const [isLockedNeedsPassphrase, setIsLockedNeedsPassphrase] = useState(false);
+  const [decryptError, setDecryptError] = useState<string | null>(null);
+
+  // WebSocket Real-time State
+  const [wsConnected, setWsConnected] = useState(false);
+  const [peers, setPeers] = useState<CollaboratorPresence[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const syncTimerRef = useRef<number | null>(null);
+  const cursorThrottleRef = useRef<number>(0);
+
+  // Refs for latest state inside socket callbacks
+  const boardRef = useRef(board);
+  boardRef.current = board;
+  const cryptoKeyRef = useRef(cryptoKey);
+  cryptoKeyRef.current = cryptoKey;
+  const e2eeEnabledRef = useRef(e2eeEnabled);
+  e2eeEnabledRef.current = e2eeEnabled;
+
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    window.setTimeout(() => {
+      setToastMsg((prev) => (prev === msg ? null : prev));
+    }, 2600);
+  }, []);
+
+  // Sync dark class on <html>
+  useEffect(() => {
+    const root = document.documentElement;
+    if (darkMode) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [darkMode]);
+
+  // Initialize E2EE Key from URL hash or generate fresh key
+  useEffect(() => {
+    let cancelled = false;
+    async function initKey() {
+      const existingHash = getHashKey();
+      if (existingHash) {
+        try {
+          const imported = await importRawRoomKey(existingHash);
+          const fp = await getKeyFingerprint(imported);
+          if (!cancelled) {
+            setRoomKeyBase64(existingHash);
+            setCryptoKey(imported);
+            setKeyFingerprint(fp);
+            setE2eeEnabled(true);
+          }
+          return;
+        } catch {
+          // Fall through to generate a valid key if hash invalid
+        }
+      }
+      const freshB64 = generateRoomKeyBase64();
+      const imported = await importRawRoomKey(freshB64);
+      const fp = await getKeyFingerprint(imported);
+      if (!cancelled) {
+        setRoomKeyBase64(freshB64);
+        setCryptoKey(imported);
+        setKeyFingerprint(fp);
+        setHashKey(freshB64);
+        setE2eeEnabled(true);
+      }
+    }
+    initKey();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Broadcast board state (encrypted or plain) over WebSocket
+  const transmitBoardSync = useCallback(async (targetBoard: BoardDocument) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    if (e2eeEnabledRef.current && cryptoKeyRef.current) {
+      const envelope = await encryptPayload(cryptoKeyRef.current, targetBoard);
+      ws.send(
+        JSON.stringify({
+          type: 'board:sync',
+          encrypted: true,
+          encryptedEnvelope: envelope,
+        })
+      );
+    } else {
+      ws.send(
+        JSON.stringify({
+          type: 'board:sync',
+          encrypted: false,
+          plainBoard: targetBoard,
+        })
+      );
+    }
+  }, []);
+
+  const scheduleBoardSync = useCallback(
+    (nextBoard: BoardDocument) => {
+      if (syncTimerRef.current) {
+        window.clearTimeout(syncTimerRef.current);
+      }
+      syncTimerRef.current = window.setTimeout(() => {
+        transmitBoardSync(nextBoard);
+      }, 90);
+    },
+    [transmitBoardSync]
+  );
+
+  // Try decrypting incoming envelope with current key
+  const applyIncomingEnvelope = useCallback(
+    async (envelope: EncryptedEnvelope) => {
+      const key = cryptoKeyRef.current;
+      if (!key) {
+        setPendingEncryptedEnvelope(envelope);
+        setIsLockedNeedsPassphrase(true);
+        return;
+      }
+      try {
+        const decrypted = await decryptPayload<BoardDocument>(key, envelope);
+        setBoard(decrypted);
+        setPendingEncryptedEnvelope(null);
+        setIsLockedNeedsPassphrase(false);
+        setDecryptError(null);
+      } catch {
+        // Key mismatch — likely room uses a custom passphrase
+        setPendingEncryptedEnvelope(envelope);
+        setIsLockedNeedsPassphrase(true);
+        setDecryptError(null);
+      }
+    },
+    []
+  );
+
+  // Real WebSocket Connection Lifecycle with Auto-Reconnect
+  useEffect(() => {
+    let unmounted = false;
+    let reconnectTimer: number | null = null;
+    let pingTimer: number | null = null;
+    let reconnectDelay = 1800;
+
+    function connect() {
+      if (unmounted) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      } catch {
+        reconnectTimer = window.setTimeout(connect, reconnectDelay);
+        return;
+      }
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (unmounted) {
+          ws.close();
+          return;
+        }
+        reconnectDelay = 1800;
+        setWsConnected(true);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: 'room:join',
+              roomId,
+              clientId,
+              name: userName,
+              color: userColor,
+            })
+          );
+        }
+        pingTimer = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'room:ping' }));
+          }
+        }, 20000);
+      };
+
+      ws.onerror = () => {
+        // Handled gracefully by onclose reconnect cycle
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'room:init') {
+            if (Array.isArray(msg.peers)) {
+              setPeers(msg.peers);
+            }
+            if (msg.encrypted && msg.encryptedEnvelope) {
+              setE2eeEnabled(true);
+              await applyIncomingEnvelope(msg.encryptedEnvelope);
+            } else if (!msg.encrypted && msg.plainBoard) {
+              setE2eeEnabled(false);
+              setBoard(msg.plainBoard);
+            } else {
+              // Empty fresh room: seed server with our initial board
+              await transmitBoardSync(boardRef.current);
+            }
+          } else if (msg.type === 'board:updated') {
+            if (msg.senderId === clientId) return;
+            if (msg.encrypted && msg.encryptedEnvelope) {
+              setE2eeEnabled(true);
+              await applyIncomingEnvelope(msg.encryptedEnvelope);
+            } else if (!msg.encrypted && msg.plainBoard) {
+              setE2eeEnabled(false);
+              setBoard(msg.plainBoard);
+            }
+          } else if (msg.type === 'presence:list') {
+            if (Array.isArray(msg.peers)) {
+              setPeers(msg.peers);
+            }
+          } else if (msg.type === 'cursor:moved') {
+            setPeers((prev) =>
+              prev.map((p) =>
+                p.clientId === msg.clientId
+                  ? {
+                      ...p,
+                      cursor: msg.cursor,
+                      selectedNodeId: msg.selectedNodeId,
+                      lastSeen: Date.now(),
+                    }
+                  : p
+              )
+            );
+          }
+        } catch (err) {
+          console.error('WS parse error:', err);
+        }
+      };
+
+      ws.onclose = () => {
+        if (pingTimer) {
+          window.clearInterval(pingTimer);
+          pingTimer = null;
+        }
+        if (unmounted) return;
+        setWsConnected(false);
+        reconnectTimer = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(10000, Math.round(reconnectDelay * 1.5));
+      };
+    }
+
+    connect();
+
+    return () => {
+      unmounted = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (pingTimer) window.clearInterval(pingTimer);
+      const current = wsRef.current;
+      if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
+        current.close();
+      }
+      wsRef.current = null;
+    };
+  }, [roomId, clientId, applyIncomingEnvelope, transmitBoardSync]);
+
+  // Helper to commit board mutations with Undo/Redo & Real-time E2EE Sync
+  const commitBoardChange = useCallback(
+    (
+      updater: (prev: BoardDocument) => BoardDocument,
+      recordHistory = true,
+      allowAutoOrganize = false
+    ) => {
+      setBoard((prev) => {
+        let next = updater(prev);
+        if (allowAutoOrganize && autoOrganizeRef.current) {
+          next = organizeBoardByTemplate(next);
+        }
+        next.updatedAt = Date.now();
+        if (recordHistory) {
+          setPast((p) => [...p.slice(-39), prev]);
+          setFuture([]);
+        }
+        scheduleBoardSync(next);
+        return next;
+      });
+    },
+    [scheduleBoardSync]
+  );
+
+  const handleUndo = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const previous = p[p.length - 1];
+      setFuture((f) => [boardRef.current, ...f]);
+      setBoard(previous);
+      scheduleBoardSync(previous);
+      return p.slice(0, -1);
+    });
+  }, [scheduleBoardSync]);
+
+  const handleRedo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[0];
+      setPast((p) => [...p, boardRef.current]);
+      setBoard(next);
+      scheduleBoardSync(next);
+      return f.slice(1);
+    });
+  }, [scheduleBoardSync]);
+
+  // Node CRUD handlers
+  const getViewportCenterWorld = useCallback(() => {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return {
+      x: Math.round((w / 2 - pan.x) / zoom - 124),
+      y: Math.round((h / 2 - pan.y) / zoom - 48),
+    };
+  }, [pan.x, pan.y, zoom]);
+
+  const getDefaultEdgeStyle = useCallback((tpl: TemplateId): ConnectorStyle => {
+    if (tpl === 'fishbone') return 'fishbone';
+    if (tpl === 'tree') return 'orthogonal';
+    if (tpl === 'star-bursting' || tpl === 'lotus-blossom') return 'straight';
+    return 'bezier';
+  }, []);
+
+  const handleAddFloatingNode = useCallback(() => {
+    const center = getViewportCenterWorld();
+    const jitterX = Math.round((Math.random() - 0.5) * 80);
+    const jitterY = Math.round((Math.random() - 0.5) * 60);
+    const node = createBlankNode({
+      x: center.x + jitterX,
+      y: center.y + jitterY,
+      title: 'Gagasan Baru',
+    });
+    commitBoardChange((prev) => ({
+      ...prev,
+      nodes: [...prev.nodes, node],
+    }));
+    setSelectedNodeId(node.id);
+    setTool('select');
+  }, [commitBoardChange, getViewportCenterWorld]);
+
+  const handleSpawnChild = useCallback(
+    (parentId: string) => {
+      const parent = boardRef.current.nodes.find((n) => n.id === parentId);
+      if (!parent) return;
+
+      const existingSiblings = boardRef.current.nodes.filter((n) => n.parentId === parentId);
+      const offsetIndex = existingSiblings.length;
+
+      let childX = parent.x + parent.width + 96;
+      let childY = parent.y + (offsetIndex - 0.5) * 120;
+
+      if (boardRef.current.templateId === 'tree') {
+        childX = parent.x + (offsetIndex - 0.5) * 260;
+        childY = parent.y + 185;
+      } else if (parent.x < -80 && boardRef.current.templateId === 'mind-mapping') {
+        // Branch left if parent is on left hemisphere
+        childX = parent.x - 290;
+      }
+
+      const child = createBlankNode({
+        parentId: parent.id,
+        x: Math.round(childX),
+        y: Math.round(childY),
+        title: 'Sub-Ide',
+        accentColor: parent.accentColor,
+      });
+
+      const edge: CanvasEdge = {
+        id: `edge-${parent.id}-${child.id}`,
+        sourceId: parent.id,
+        targetId: child.id,
+        color: parent.accentColor,
+        style: getDefaultEdgeStyle(boardRef.current.templateId),
+      };
+
+      commitBoardChange(
+        (prev) => ({
+          ...prev,
+          nodes: prev.nodes
+            .map((n) => (n.id === parent.id ? { ...n, collapsed: false } : n))
+            .concat(child),
+          edges: [...prev.edges, edge],
+        }),
+        true,
+        true
+      );
+      setSelectedNodeId(child.id);
+    },
+    [commitBoardChange, getDefaultEdgeStyle]
+  );
+
+  const handleAddTableNode = useCallback(() => {
+    const center = getViewportCenterWorld();
+    const node = createBlankNode({
+      kind: 'table',
+      x: center.x - 50,
+      y: center.y,
+      width: 380,
+      title: 'Tabel Data Terstruktur',
+      accentColor: '#D97706',
+      surfaceColor: '#FFFBEB',
+      table: createDefaultTable(),
+    });
+    commitBoardChange((prev) => ({
+      ...prev,
+      nodes: [...prev.nodes, node],
+    }));
+    setSelectedNodeId(node.id);
+  }, [commitBoardChange, getViewportCenterWorld]);
+
+  const handleAddStickyNote = useCallback(() => {
+    const center = getViewportCenterWorld();
+    const node = createBlankNode({
+      kind: 'note',
+      x: center.x,
+      y: center.y,
+      width: 240,
+      title: 'Catatan Cepat',
+      body: 'Tulis poin penting atau ringkasan rapat di sini.',
+      surfaceColor: '#FFFBEB',
+      accentColor: '#D97706',
+      timestampStamp: formatStamp(new Date(), 'full'),
+    });
+    commitBoardChange((prev) => ({
+      ...prev,
+      nodes: [...prev.nodes, node],
+    }));
+    setSelectedNodeId(node.id);
+  }, [commitBoardChange, getViewportCenterWorld]);
+
+  const handleMoveNode = useCallback(
+    (nodeId: string, x: number, y: number, commit = false) => {
+      if (commit) {
+        commitBoardChange(
+          (prev) => ({
+            ...prev,
+            nodes: prev.nodes.map((n) => (n.id === nodeId ? { ...n, x, y } : n)),
+          }),
+          false
+        );
+      } else {
+        setBoard((prev) => {
+          const next = {
+            ...prev,
+            nodes: prev.nodes.map((n) => (n.id === nodeId ? { ...n, x, y } : n)),
+          };
+          scheduleBoardSync(next);
+          return next;
+        });
+      }
+    },
+    [commitBoardChange, scheduleBoardSync]
+  );
+
+  const handleUpdateNode = useCallback(
+    (nodeId: string, patch: Partial<CanvasNode>) => {
+      const shouldReorganize = patch.collapsed !== undefined;
+      commitBoardChange(
+        (prev) => ({
+          ...prev,
+          nodes: prev.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)),
+        }),
+        true,
+        shouldReorganize
+      );
+    },
+    [commitBoardChange]
+  );
+
+  const handleDuplicateNode = useCallback(
+    (nodeId: string) => {
+      const target = boardRef.current.nodes.find((n) => n.id === nodeId);
+      if (!target) return;
+      const copy: CanvasNode = {
+        ...structuredClone(target),
+        id: `node-${crypto.randomUUID().slice(0, 8)}`,
+        x: target.x + 36,
+        y: target.y + 36,
+        title: `${target.title} (Salinan)`,
+      };
+      commitBoardChange((prev) => ({
+        ...prev,
+        nodes: [...prev.nodes, copy],
+      }));
+      setSelectedNodeId(copy.id);
+    },
+    [commitBoardChange]
+  );
+
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      commitBoardChange(
+        (prev) => ({
+          ...prev,
+          nodes: prev.nodes
+            .filter((n) => n.id !== nodeId)
+            .map((n) => (n.parentId === nodeId ? { ...n, parentId: null } : n)),
+          edges: prev.edges.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId),
+        }),
+        true,
+        true
+      );
+      if (selectedNodeId === nodeId) setSelectedNodeId(null);
+      if (connectSourceId === nodeId) setConnectSourceId(null);
+    },
+    [commitBoardChange, connectSourceId, selectedNodeId]
+  );
+
+  const handleConnectClick = useCallback(
+    (nodeId: string) => {
+      if (!connectSourceId) {
+        setConnectSourceId(nodeId);
+        setTool('connect');
+        showToast('Pilih node tujuan untuk membuat koneksi cabang.');
+        return;
+      }
+      if (connectSourceId === nodeId) {
+        setConnectSourceId(null);
+        return;
+      }
+      const exists = boardRef.current.edges.some(
+        (e) =>
+          (e.sourceId === connectSourceId && e.targetId === nodeId) ||
+          (e.sourceId === nodeId && e.targetId === connectSourceId)
+      );
+      if (!exists) {
+        const srcNode = boardRef.current.nodes.find((n) => n.id === connectSourceId);
+        const newEdge: CanvasEdge = {
+          id: `edge-${crypto.randomUUID().slice(0, 8)}`,
+          sourceId: connectSourceId,
+          targetId: nodeId,
+          color: srcNode?.accentColor || '#2563EB',
+          style: getDefaultEdgeStyle(boardRef.current.templateId),
+        };
+        commitBoardChange(
+          (prev) => ({
+            ...prev,
+            nodes: prev.nodes.map((n) =>
+              n.id === nodeId && !n.parentId ? { ...n, parentId: connectSourceId } : n
+            ),
+            edges: [...prev.edges, newEdge],
+          }),
+          true,
+          true
+        );
+      }
+      setConnectSourceId(null);
+      setTool('select');
+    },
+    [commitBoardChange, connectSourceId, getDefaultEdgeStyle, showToast]
+  );
+
+  const handleDeleteEdge = useCallback(
+    (edgeId: string) => {
+      commitBoardChange((prev) => ({
+        ...prev,
+        edges: prev.edges.filter((e) => e.id !== edgeId),
+      }));
+    },
+    [commitBoardChange]
+  );
+
+  // Stamp Day & Time handler
+  const handleInsertDateTimeStamp = useCallback(
+    (formattedStamp: string) => {
+      if (selectedNodeId) {
+        handleUpdateNode(selectedNodeId, { timestampStamp: formattedStamp });
+        showToast(`Stamp waktu disisipkan: ${formattedStamp}`);
+      } else {
+        const center = getViewportCenterWorld();
+        const node = createBlankNode({
+          kind: 'note',
+          x: center.x,
+          y: center.y,
+          title: `Catatan Waktu`,
+          body: 'Ide atau keputusan rapat tercatat pada stempel waktu di bawah.',
+          timestampStamp: formattedStamp,
+          surfaceColor: '#EFF6FF',
+          accentColor: '#2563EB',
+        });
+        commitBoardChange((prev) => ({
+          ...prev,
+          nodes: [...prev.nodes, node],
+        }));
+        setSelectedNodeId(node.id);
+        showToast(`Node baru dibuat dengan stamp: ${formattedStamp}`);
+      }
+    },
+    [commitBoardChange, getViewportCenterWorld, handleUpdateNode, selectedNodeId, showToast]
+  );
+
+  // Zoom & Fit handlers
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => Math.min(2.5, Number((z + 0.15).toFixed(2))));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => Math.max(0.25, Number((z - 0.15).toFixed(2))));
+  }, []);
+
+  const handleResetZoom = useCallback(() => {
+    setZoom(1);
+  }, []);
+
+  const handleCenterOrigin = useCallback(() => {
+    setPan({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    setZoom(1);
+  }, []);
+
+  const handleFitView = useCallback(() => {
+    const nodes = boardRef.current.nodes;
+    if (nodes.length === 0) {
+      handleCenterOrigin();
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const n of nodes) {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + n.width);
+      maxY = Math.max(maxY, n.y + 180);
+    }
+    const worldW = Math.max(300, maxX - minX + 180);
+    const worldH = Math.max(250, maxY - minY + 200);
+    const vw = window.innerWidth - 120;
+    const vh = window.innerHeight - 160;
+    const nextZoom = Math.min(1.2, Math.max(0.3, Math.min(vw / worldW, vh / worldH)));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    setZoom(nextZoom);
+    setPan({
+      x: window.innerWidth / 2 - centerX * nextZoom,
+      y: window.innerHeight / 2 - centerY * nextZoom,
+    });
+  }, [handleCenterOrigin]);
+
+  // Apply Template (sample board)
+  const handleApplyTemplate = useCallback(
+    (tplId: TemplateId) => {
+      const next = buildTemplateBoard(tplId, roomId);
+      commitBoardChange(() => next);
+      setSelectedNodeId(null);
+      setTimeout(() => handleFitView(), 60);
+      showToast(`Template "${next.title}" diterapkan.`);
+    },
+    [commitBoardChange, handleFitView, roomId, showToast]
+  );
+
+  // Organize / Realign existing nodes into template pattern
+  const handleOrganizeLayout = useCallback(
+    (targetTemplateId?: TemplateId) => {
+      commitBoardChange((prev) => organizeBoardByTemplate(prev, targetTemplateId));
+      setTimeout(() => handleFitView(), 60);
+      const activeName = targetTemplateId ?? boardRef.current.templateId;
+      showToast(`Tata letak dirapikan sesuai pola ${activeName}.`);
+    },
+    [commitBoardChange, handleFitView, showToast]
+  );
+
+  const handleToggleAutoOrganize = useCallback(() => {
+    setAutoOrganize((prev) => {
+      const next = !prev;
+      if (next) {
+        commitBoardChange((b) => organizeBoardByTemplate(b));
+        setTimeout(() => handleFitView(), 60);
+        showToast('Auto-Rapikan diaktifkan: cabang otomatis tersusun rapi.');
+      } else {
+        showToast('Auto-Rapikan dimatikan.');
+      }
+      return next;
+    });
+  }, [commitBoardChange, handleFitView, showToast]);
+
+  // Save Visual Media to existing or newly created node
+  const handleSaveMedia = useCallback(
+    (media: MediaAttachment | null) => {
+      if (pendingMediaNewNode && media) {
+        const center = getViewportCenterWorld();
+        const node = createBlankNode({
+          kind: 'media',
+          x: center.x,
+          y: center.y,
+          width: 280,
+          title: media.caption || 'Media Visual',
+          media,
+          accentColor: '#2563EB',
+        });
+        commitBoardChange((prev) => ({
+          ...prev,
+          nodes: [...prev.nodes, node],
+        }));
+        setSelectedNodeId(node.id);
+      } else if (mediaModalNodeId) {
+        handleUpdateNode(mediaModalNodeId, { media });
+      }
+      setPendingMediaNewNode(false);
+      setMediaModalNodeId(null);
+    },
+    [
+      commitBoardChange,
+      getViewportCenterWorld,
+      handleUpdateNode,
+      mediaModalNodeId,
+      pendingMediaNewNode,
+    ]
+  );
+
+  // Cursor broadcasting
+  const handleCursorMove = useCallback(
+    (worldPos: { x: number; y: number } | null) => {
+      const now = performance.now();
+      if (now - cursorThrottleRef.current < 65) return;
+      cursorThrottleRef.current = now;
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: 'cursor:move',
+            cursor: worldPos,
+            selectedNodeId,
+          })
+        );
+      }
+    },
+    [selectedNodeId]
+  );
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInput =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (!isInput) {
+          e.preventDefault();
+          if (e.shiftKey) handleRedo();
+          else handleUndo();
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        if (!isInput) {
+          e.preventDefault();
+          handleRedo();
+        }
+        return;
+      }
+
+      if (isInput) return;
+
+      if (e.key === 'v' || e.key === 'V') setTool('select');
+      if (e.key === 'h' || e.key === 'H') setTool('pan');
+      if (e.key === 'c' || e.key === 'C') setTool('connect');
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        handleAddFloatingNode();
+      }
+      if (e.key === 'Tab' && selectedNodeId) {
+        e.preventDefault();
+        handleSpawnChild(selectedNodeId);
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
+        e.preventDefault();
+        handleDeleteNode(selectedNodeId);
+      }
+      if (e.key === '=' || e.key === '+') handleZoomIn();
+      if (e.key === '-') handleZoomOut();
+      if (e.key === 'l' || e.key === 'L') {
+        e.preventDefault();
+        handleOrganizeLayout();
+      }
+      if (e.key === 'Escape') {
+        setConnectSourceId(null);
+        setTool('select');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    handleAddFloatingNode,
+    handleDeleteNode,
+    handleOrganizeLayout,
+    handleRedo,
+    handleSpawnChild,
+    handleUndo,
+    handleZoomIn,
+    handleZoomOut,
+    selectedNodeId,
+  ]);
+
+  // E2EE Controls
+  const handleToggleE2ee = async (enabled: boolean) => {
+    setE2eeEnabled(enabled);
+    e2eeEnabledRef.current = enabled;
+    if (enabled && !cryptoKey) {
+      const b64 = generateRoomKeyBase64();
+      const k = await importRawRoomKey(b64);
+      const fp = await getKeyFingerprint(k);
+      setRoomKeyBase64(b64);
+      setCryptoKey(k);
+      cryptoKeyRef.current = k;
+      setKeyFingerprint(fp);
+      setHashKey(b64);
+    } else if (!enabled) {
+      setHashKey(null);
+    } else if (enabled && roomKeyBase64) {
+      setHashKey(roomKeyBase64);
+    }
+    await transmitBoardSync(boardRef.current);
+  };
+
+  const handleSetPassphrase = async (passphrase: string) => {
+    const { key, keyBase64Url } = await deriveKeyFromPassphrase(passphrase, roomId);
+    const fp = await getKeyFingerprint(key);
+    setCryptoKey(key);
+    cryptoKeyRef.current = key;
+    setRoomKeyBase64(keyBase64Url);
+    setKeyFingerprint(fp);
+    setE2eeEnabled(true);
+    e2eeEnabledRef.current = true;
+    // Strip key from URL hash so passphrase stays secret
+    setHashKey(null);
+    await transmitBoardSync(boardRef.current);
+    showToast('Frasa sandi E2EE diterapkan.');
+  };
+
+  const handleRotateRandomKey = async () => {
+    const b64 = generateRoomKeyBase64();
+    const k = await importRawRoomKey(b64);
+    const fp = await getKeyFingerprint(k);
+    setCryptoKey(k);
+    cryptoKeyRef.current = k;
+    setRoomKeyBase64(b64);
+    setKeyFingerprint(fp);
+    setHashKey(b64);
+    await transmitBoardSync(boardRef.current);
+    showToast('Kunci enkripsi 256-bit baru dibuat.');
+  };
+
+  const handleUnlockWithPassphrase = async (passphrase: string): Promise<boolean> => {
+    if (!pendingEncryptedEnvelope) return true;
+    try {
+      const { key, keyBase64Url } = await deriveKeyFromPassphrase(passphrase, roomId);
+      const decrypted = await decryptPayload<BoardDocument>(key, pendingEncryptedEnvelope);
+      const fp = await getKeyFingerprint(key);
+      setCryptoKey(key);
+      cryptoKeyRef.current = key;
+      setRoomKeyBase64(keyBase64Url);
+      setKeyFingerprint(fp);
+      setBoard(decrypted);
+      setPendingEncryptedEnvelope(null);
+      setIsLockedNeedsPassphrase(false);
+      setDecryptError(null);
+      showToast('Kanvas berhasil didekripsi!');
+      return true;
+    } catch {
+      setDecryptError('Frasa sandi tidak cocok dengan kunci enkripsi ruang ini.');
+      return false;
+    }
+  };
+
+  // Multi-format Export Handler
+  const handleExport = async (format: ExportFormat) => {
+    setExportingFormat(format);
+    try {
+      if (format === 'png') await exportAsPng(board, darkMode);
+      else if (format === 'pdf') await exportAsPdf(board, darkMode);
+      else if (format === 'docx') await exportAsDocx(board);
+      else if (format === 'pptx') await exportAsPptx(board, darkMode);
+      else if (format === 'md') exportAsMarkdown(board);
+      showToast(`Ekspor ${format.toUpperCase()} selesai diunduh.`);
+    } catch (err) {
+      console.error('Export failed:', err);
+      showToast(`Gagal mengekspor ${format.toUpperCase()}.`);
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
+  // Collaboration Profile / Room Switching
+  const handleUpdateProfile = (name: string, color: string) => {
+    setUserName(name);
+    setUserColor(color);
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'presence:update', name, color }));
+    }
+    showToast('Profil kolaborator diperbarui.');
+  };
+
+  const handleJoinRoom = (nextRoomId: string) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('room', nextRoomId);
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}?${params.toString()}${window.location.hash}`
+    );
+    setRoomId(nextRoomId);
+    setShowCollab(false);
+    showToast(`Bergabung ke ruang: ${nextRoomId}`);
+  };
+
+  const selectedNode = useMemo(
+    () => board.nodes.find((n) => n.id === selectedNodeId) ?? null,
+    [board.nodes, selectedNodeId]
+  );
+
+  const mediaModalTargetNode = useMemo(
+    () => board.nodes.find((n) => n.id === mediaModalNodeId) ?? null,
+    [board.nodes, mediaModalNodeId]
+  );
+
+  return (
+    <div className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-slate-100">
+      <TopBar
+        title={board.title}
+        roomId={roomId}
+        peerCount={Math.max(1, peers.length)}
+        wsConnected={wsConnected}
+        e2eeEnabled={e2eeEnabled}
+        darkMode={darkMode}
+        exportingFormat={exportingFormat}
+        onChangeTitle={(title) =>
+          commitBoardChange((prev) => ({
+            ...prev,
+            title,
+          }))
+        }
+        onOpenTemplates={() => setShowTemplates(true)}
+        onOpenCollaboration={() => setShowCollab(true)}
+        onOpenEncryption={() => setShowEncryption(true)}
+        onToggleTheme={() => setDarkMode((d) => !d)}
+        onExport={handleExport}
+      />
+
+      {/* Contextual Rich Formatting Dock when a node is selected */}
+      {selectedNode && (
+        <NodeFormattingBar
+          node={selectedNode}
+          onUpdateNode={handleUpdateNode}
+          onSpawnChild={handleSpawnChild}
+          onDuplicateNode={handleDuplicateNode}
+          onDeleteNode={handleDeleteNode}
+          onOpenMediaModal={(nid) => {
+            setPendingMediaNewNode(false);
+            setMediaModalNodeId(nid);
+          }}
+        />
+      )}
+
+      {/* Left Floating Creation & Navigation Toolbar */}
+      <FloatingToolbar
+        tool={tool}
+        hasSelection={Boolean(selectedNodeId)}
+        canUndo={past.length > 0}
+        canRedo={future.length > 0}
+        onSelectTool={(t) => {
+          setTool(t);
+          if (t !== 'connect') setConnectSourceId(null);
+        }}
+        onAddFloatingNode={handleAddFloatingNode}
+        onAddChildNode={() => selectedNodeId && handleSpawnChild(selectedNodeId)}
+        onAddTableNode={handleAddTableNode}
+        onAddMediaNode={() => {
+          setPendingMediaNewNode(true);
+          setMediaModalNodeId('__new__');
+        }}
+        onAddStickyNote={handleAddStickyNote}
+        onOrganizeLayout={() => handleOrganizeLayout()}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+      />
+
+      {/* Infinite Floating Workspace Canvas */}
+      <main className="w-full h-full pt-14">
+        <CanvasWorkspace
+          nodes={board.nodes}
+          edges={board.edges}
+          templateId={board.templateId}
+          selectedNodeId={selectedNodeId}
+          connectSourceId={connectSourceId}
+          tool={tool}
+          darkMode={darkMode}
+          pan={pan}
+          zoom={zoom}
+          peers={peers}
+          clientId={clientId}
+          onChangePanZoom={(nextPan, nextZoom) => {
+            setPan(nextPan);
+            setZoom(nextZoom);
+          }}
+          onSelectNode={setSelectedNodeId}
+          onMoveNode={handleMoveNode}
+          onUpdateNode={handleUpdateNode}
+          onSpawnChild={handleSpawnChild}
+          onConnectClick={handleConnectClick}
+          onDeleteEdge={handleDeleteEdge}
+          onOpenMediaModal={(nid) => {
+            setPendingMediaNewNode(false);
+            setMediaModalNodeId(nid);
+          }}
+          onCursorMove={handleCursorMove}
+        />
+      </main>
+
+      {/* Bottom Floating Bar: Parallel Day/Time Stamp Input + Zoom Out / Zoom In + Rapikan */}
+      <BottomControlBar
+        zoom={zoom}
+        hasSelectedNode={Boolean(selectedNodeId)}
+        autoOrganize={autoOrganize}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onResetZoom={handleResetZoom}
+        onFitView={handleFitView}
+        onCenterOrigin={handleCenterOrigin}
+        onInsertDateTimeStamp={handleInsertDateTimeStamp}
+        onOrganizeLayout={() => handleOrganizeLayout()}
+        onToggleAutoOrganize={handleToggleAutoOrganize}
+      />
+
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed top-16 right-5 z-50 px-3.5 py-2 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium shadow-lg border border-slate-700 pointer-events-none">
+          {toastMsg}
+        </div>
+      )}
+
+      {/* Modals */}
+      {showTemplates && (
+        <TemplateModal
+          currentTemplateId={board.templateId}
+          onApplyTemplate={handleApplyTemplate}
+          onRealignToTemplate={(tplId) => handleOrganizeLayout(tplId)}
+          onClose={() => setShowTemplates(false)}
+        />
+      )}
+
+      {showCollab && (
+        <CollaborationModal
+          roomId={roomId}
+          clientId={clientId}
+          userName={userName}
+          userColor={userColor}
+          wsConnected={wsConnected}
+          e2eeEnabled={e2eeEnabled}
+          roomKeyBase64={roomKeyBase64}
+          peers={peers}
+          onUpdateProfile={handleUpdateProfile}
+          onJoinRoom={handleJoinRoom}
+          onClose={() => setShowCollab(false)}
+        />
+      )}
+
+      {(showEncryption || isLockedNeedsPassphrase) && (
+        <EncryptionModal
+          e2eeEnabled={e2eeEnabled}
+          keyFingerprint={keyFingerprint}
+          isLockedNeedsPassphrase={isLockedNeedsPassphrase}
+          decryptError={decryptError}
+          onToggleE2ee={handleToggleE2ee}
+          onSetPassphrase={handleSetPassphrase}
+          onRotateRandomKey={handleRotateRandomKey}
+          onUnlockWithPassphrase={handleUnlockWithPassphrase}
+          onClose={() => setShowEncryption(false)}
+        />
+      )}
+
+      {mediaModalNodeId && (
+        <MediaModal
+          initialMedia={pendingMediaNewNode ? null : mediaModalTargetNode?.media}
+          onSave={handleSaveMedia}
+          onClose={() => {
+            setPendingMediaNewNode(false);
+            setMediaModalNodeId(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}

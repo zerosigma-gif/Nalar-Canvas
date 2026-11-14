@@ -1,0 +1,6 @@
+{
+  "name": "NalarCanvas — Collaborative Brainstorm Mapping",
+  "description": "Infinite canvas mind mapping dan brainstorming ide dengan kolaborasi real-time, enkripsi end-to-end, tabel dinamis, template terstruktur, dan ekspor multi-format.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
