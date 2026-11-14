@@ -90,8 +90,8 @@ export default function App() {
     () => DEFAULT_USER_COLORS[Math.floor(Math.random() * DEFAULT_USER_COLORS.length)]
   );
 
-  // Board & History
-  const [board, setBoard] = useState<BoardDocument>(() => buildTemplateBoard('mind-mapping', roomId));
+  // Board & History (starts on empty From Scratch canvas)
+  const [board, setBoard] = useState<BoardDocument>(() => buildFromScratchBoard(roomId));
   const [past, setPast] = useState<BoardDocument[]>([]);
   const [future, setFuture] = useState<BoardDocument[]>([]);
 
@@ -1303,6 +1303,7 @@ export default function App() {
       {showTemplates && (
         <TemplateModal
           currentTemplateId={board.templateId}
+          isFromScratch={board.nodes.length === 0 && board.edges.length === 0}
           onApplyTemplate={handleApplyTemplate}
           onRealignToTemplate={(tplId) => handleOrganizeLayout(tplId)}
           onCreateFromScratch={handleCreateFromScratch}

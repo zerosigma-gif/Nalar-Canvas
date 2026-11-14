@@ -5,6 +5,7 @@ import { TEMPLATE_CATALOG } from '../utils/templates';
 
 interface TemplateModalProps {
   currentTemplateId: TemplateId;
+  isFromScratch?: boolean;
   onApplyTemplate: (templateId: TemplateId) => void;
   onRealignToTemplate: (templateId: TemplateId) => void;
   onCreateFromScratch: () => void;
@@ -105,6 +106,7 @@ const TemplateSchematic: React.FC<{ id: TemplateId }> = ({ id }) => {
 
 export const TemplateModal: React.FC<TemplateModalProps> = ({
   currentTemplateId,
+  isFromScratch = false,
   onApplyTemplate,
   onRealignToTemplate,
   onCreateFromScratch,
@@ -141,7 +143,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
         <div className="p-5 sm:p-6 overflow-y-auto flex-1">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {TEMPLATE_CATALOG.map((tpl) => {
-              const active = tpl.id === currentTemplateId;
+              const active = !isFromScratch && tpl.id === currentTemplateId;
               return (
                 <div
                   key={tpl.id}
@@ -195,7 +197,13 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
             })}
 
             {/* From Scratch — Blank Empty Canvas */}
-            <div className="text-left rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-4 transition-all flex flex-col justify-between bg-slate-50/60 dark:bg-slate-950/60">
+            <div
+              className={`text-left rounded-xl border p-4 transition-all flex flex-col justify-between ${
+                isFromScratch
+                  ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/25'
+                  : 'border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-950/60'
+              }`}
+            >
               <div>
                 <div className="rounded-lg bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 mb-3 p-2">
                   <svg viewBox="0 0 180 90" className="w-full h-24 text-slate-400 dark:text-slate-500">
@@ -233,11 +241,15 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                     onCreateFromScratch();
                     onClose();
                   }}
-                  className="w-full py-2 px-2.5 rounded-lg bg-slate-900 dark:bg-blue-600 text-white hover:bg-slate-800 dark:hover:bg-blue-700 text-xs font-semibold transition-colors inline-flex items-center justify-between whitespace-nowrap"
+                  className={`w-full py-2 px-2.5 rounded-lg text-xs font-semibold transition-colors inline-flex items-center justify-between whitespace-nowrap ${
+                    isFromScratch
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-slate-900 dark:bg-blue-600 text-white hover:bg-slate-800 dark:hover:bg-blue-700'
+                  }`}
                 >
                   <span className="inline-flex items-center gap-1.5">
                     <FilePlus2 className="w-3.5 h-3.5" />
-                    <span>Mulai From Scratch</span>
+                    <span>{isFromScratch ? 'Kanvas Kosong (Aktif)' : 'Mulai From Scratch'}</span>
                   </span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
