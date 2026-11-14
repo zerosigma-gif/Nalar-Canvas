@@ -587,3 +587,14 @@ export function buildTemplateBoard(templateId: TemplateId, existingId?: string):
     updatedAt: Date.now(),
   };
 }
+
+export function buildFromScratchBoard(existingId?: string): BoardDocument {
+  return {
+    id: existingId ?? `board-${crypto.randomUUID().slice(0, 8)}`,
+    title: 'Kanvas Kosong — From Scratch',
+    templateId: 'mind-mapping',
+    nodes: [],
+    edges: [],
+    updatedAt: Date.now(),
+  };
+}

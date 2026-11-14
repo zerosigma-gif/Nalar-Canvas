@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
 import {
   CanvasEdge,
   CanvasNode,
@@ -426,12 +425,12 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
 
             return (
               <g key={edge.id} className="pointer-events-auto">
-                {/* Wide invisible hit target for easy edge hover/delete */}
+                {/* Wide hit target for easy edge hover */}
                 <path
                   d={pathD}
                   fill="none"
                   stroke="transparent"
-                  strokeWidth={14}
+                  strokeWidth={16}
                   className="cursor-pointer"
                   onMouseEnter={() => setHoveredEdgeId(edge.id)}
                   onMouseLeave={() => setHoveredEdgeId(null)}
@@ -444,22 +443,53 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
                   strokeLinecap="round"
                   className="transition-colors pointer-events-none"
                 />
-                {isHovered && (
-                  <g
-                    transform={`translate(${midX}, ${midY})`}
-                    onClick={(e) => {
+                {/* Always-accessible line trash can icon button on connecting line */}
+                <g
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Hapus garis penghubung"
+                  transform={`translate(${midX}, ${midY}) scale(${isHovered ? 1.12 : 1})`}
+                  style={{ pointerEvents: 'all' }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteEdge(edge.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
                       e.stopPropagation();
                       onDeleteEdge(edge.id);
-                    }}
-                    onMouseEnter={() => setHoveredEdgeId(edge.id)}
-                    className="cursor-pointer"
+                    }
+                  }}
+                  onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                  onMouseLeave={() => setHoveredEdgeId(null)}
+                  className="cursor-pointer"
+                >
+                  <title>Hapus garis penghubung</title>
+                  <circle r={16} fill="transparent" />
+                  <circle
+                    r={11}
+                    fill={isHovered ? '#EF4444' : darkMode ? '#0F172A' : '#FFFFFF'}
+                    stroke={isHovered ? '#DC2626' : darkMode ? '#991B1B' : '#FCA5A5'}
+                    strokeWidth={1.4}
+                  />
+                  <g
+                    fill="none"
+                    stroke={isHovered ? '#FFFFFF' : '#EF4444'}
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   >
-                    <circle r={11} fill="#EF4444" />
-                    <foreignObject x={-7} y={-7} width={14} height={14}>
-                      <Trash2 className="w-3.5 h-3.5 text-white" />
-                    </foreignObject>
+                    <path d="M-4.5 -2.8 H4.5" />
+                    <path d="M-1.8 -2.8 V-4.2 C-1.8 -4.55 -1.55 -4.8 -1.2 -4.8 H1.2 C1.55 -4.8 1.8 -4.55 1.8 -4.2 V-2.8" />
+                    <path d="M-3.4 -2.8 L-2.85 3.9 C-2.8 4.4 -2.38 4.8 -1.85 4.8 H1.85 C2.38 4.8 2.8 4.4 2.85 3.9 L3.4 -2.8" />
+                    <line x1="-1.1" y1="-0.6" x2="-1.1" y2="2.6" />
+                    <line x1="1.1" y1="-0.6" x2="1.1" y2="2.6" />
                   </g>
-                )}
+                </g>
               </g>
             );
           })}

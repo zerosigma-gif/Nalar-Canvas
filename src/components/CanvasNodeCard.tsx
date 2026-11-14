@@ -356,7 +356,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
         className={`absolute left-1/2 -bottom-3.5 -translate-x-1/2 w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 shadow-sm flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all ${
           isConnectSource
             ? 'opacity-100 bg-emerald-600 text-white border-emerald-600'
-            : isSelected
+            : isSelected || tool === 'connect'
             ? 'opacity-100'
             : 'opacity-0 group-hover:opacity-100'
         }`}

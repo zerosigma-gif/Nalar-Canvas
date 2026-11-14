@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, ArrowRight, Workflow } from 'lucide-react';
+import { X, ArrowRight, Workflow, FilePlus2 } from 'lucide-react';
 import { TemplateId } from '../types/canvas';
 import { TEMPLATE_CATALOG } from '../utils/templates';
 
@@ -7,6 +7,7 @@ interface TemplateModalProps {
   currentTemplateId: TemplateId;
   onApplyTemplate: (templateId: TemplateId) => void;
   onRealignToTemplate: (templateId: TemplateId) => void;
+  onCreateFromScratch: () => void;
   onClose: () => void;
 }
 
@@ -106,6 +107,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
   currentTemplateId,
   onApplyTemplate,
   onRealignToTemplate,
+  onCreateFromScratch,
   onClose,
 }) => {
   return (
@@ -191,6 +193,56 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                 </div>
               );
             })}
+
+            {/* From Scratch — Blank Empty Canvas */}
+            <div className="text-left rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-4 transition-all flex flex-col justify-between bg-slate-50/60 dark:bg-slate-950/60">
+              <div>
+                <div className="rounded-lg bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 mb-3 p-2">
+                  <svg viewBox="0 0 180 90" className="w-full h-24 text-slate-400 dark:text-slate-500">
+                    <rect
+                      x="22"
+                      y="14"
+                      width="136"
+                      height="62"
+                      rx="8"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeDasharray="4 4"
+                    />
+                    <circle cx="90" cy="45" r="14" fill="#EFF6FF" stroke="#2563EB" strokeWidth="1.5" />
+                    <line x1="84" y1="45" x2="96" y2="45" stroke="#2563EB" strokeWidth="1.8" strokeLinecap="round" />
+                    <line x1="90" y1="39" x2="90" y2="51" stroke="#2563EB" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  From Scratch
+                </div>
+                <div className="text-[11px] font-medium text-blue-600 dark:text-blue-400 mt-0.5">
+                  Kanvas Kosong Bebas
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                  Hadirkan kanvas kosong tanpa node maupun garis awal agar Anda bebas menyusun gagasan, tabel, dan koneksi sendiri.
+                </p>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-200/80 dark:border-slate-800 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onCreateFromScratch();
+                    onClose();
+                  }}
+                  className="w-full py-2 px-2.5 rounded-lg bg-slate-900 dark:bg-blue-600 text-white hover:bg-slate-800 dark:hover:bg-blue-700 text-xs font-semibold transition-colors inline-flex items-center justify-between whitespace-nowrap"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <FilePlus2 className="w-3.5 h-3.5" />
+                    <span>Mulai From Scratch</span>
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

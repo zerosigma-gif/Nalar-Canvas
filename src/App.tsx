@@ -42,6 +42,7 @@ import {
   exportAsPptx,
 } from './utils/exports';
 import {
+  buildFromScratchBoard,
   buildTemplateBoard,
   createBlankNode,
   createDefaultTable,
@@ -678,6 +679,9 @@ export default function App() {
           true,
           true
         );
+        showToast('Kedua node berhasil dihubungkan.');
+      } else {
+        showToast('Kedua node tersebut sudah terhubung.');
       }
       setConnectSourceId(null);
       setTool('select');
@@ -687,12 +691,27 @@ export default function App() {
 
   const handleDeleteEdge = useCallback(
     (edgeId: string) => {
-      commitBoardChange((prev) => ({
-        ...prev,
-        edges: prev.edges.filter((e) => e.id !== edgeId),
-      }));
+      commitBoardChange((prev) => {
+        const targetEdge = prev.edges.find((e) => e.id === edgeId);
+        if (!targetEdge) return prev;
+        const remainingEdges = prev.edges.filter((e) => e.id !== edgeId);
+        return {
+          ...prev,
+          nodes: prev.nodes.map((n) => {
+            if (n.id === targetEdge.targetId && n.parentId === targetEdge.sourceId) {
+              return { ...n, parentId: null };
+            }
+            if (n.id === targetEdge.sourceId && n.parentId === targetEdge.targetId) {
+              return { ...n, parentId: null };
+            }
+            return n;
+          }),
+          edges: remainingEdges,
+        };
+      });
+      showToast('Garis penghubung dihapus.');
     },
-    [commitBoardChange]
+    [commitBoardChange, showToast]
   );
 
   // Stamp Day & Time handler
@@ -780,6 +799,18 @@ export default function App() {
     },
     [commitBoardChange, handleFitView, roomId, showToast]
   );
+
+  // Create Empty Canvas (From Scratch)
+  const handleCreateFromScratch = useCallback(() => {
+    const next = buildFromScratchBoard(roomId);
+    commitBoardChange(() => next);
+    setSelectedNodeId(null);
+    setConnectSourceId(null);
+    setTool('select');
+    setPan({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    setZoom(1);
+    showToast('Kanvas kosong (From Scratch) siap digunakan.');
+  }, [commitBoardChange, roomId, showToast]);
 
   // Organize / Realign existing nodes into template pattern
   const handleOrganizeLayout = useCallback(
@@ -1274,6 +1305,7 @@ export default function App() {
           currentTemplateId={board.templateId}
           onApplyTemplate={handleApplyTemplate}
           onRealignToTemplate={(tplId) => handleOrganizeLayout(tplId)}
+          onCreateFromScratch={handleCreateFromScratch}
           onClose={() => setShowTemplates(false)}
         />
       )}
