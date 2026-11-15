@@ -3,6 +3,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { parseUploadedDocument } from './server/documentImporter';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,7 +69,7 @@ function getPresenceList(room: RoomState): PeerPresence[] {
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '25mb' }));
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, rooms: rooms.size });
@@ -87,6 +88,31 @@ async function startServer() {
       peers: room.clients.size,
       updatedAt: room.updatedAt,
     });
+  });
+
+  app.post('/api/import/document', async (req, res) => {
+    try {
+      const { fileName, base64, mode } = req.body || {};
+      if (typeof fileName !== 'string' || !fileName.trim()) {
+        res.status(400).json({ error: 'Nama file dokumen wajib disertakan.' });
+        return;
+      }
+      if (typeof base64 !== 'string' || !base64.trim()) {
+        res.status(400).json({ error: 'Konten file dokumen kosong atau tidak valid.' });
+        return;
+      }
+      const scanMode = mode === 'ai-semantic' ? 'ai-semantic' : 'structural';
+      const result = await parseUploadedDocument({
+        fileName: fileName.trim(),
+        base64,
+        mode: scanMode,
+      });
+      res.json(result);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Gagal memindai dokumen menjadi jaringan node.';
+      res.status(400).json({ error: message });
+    }
   });
 
   const server = http.createServer(app);
