@@ -1,6 +1,11 @@
-import React, { useState } from 'react';
-import { Copy, Check, Users, RefreshCw, X, KeyRound, Lock, Eye, EyeOff } from 'lucide-react';
-import { CollaboratorPresence } from '../types/canvas';
+import React, { useEffect, useState } from 'react';
+import { Copy, Check, Users, RefreshCw, X, KeyRound, Lock, Eye, EyeOff, Clock3 } from 'lucide-react';
+import {
+  CollaboratorPresence,
+  ROOM_LIFETIME_OPTIONS,
+  RoomLifetimeInfo,
+  RoomLifetimeMinutes,
+} from '../types/canvas';
 
 interface CollaborationModalProps {
   roomId: string;
@@ -11,10 +16,12 @@ interface CollaborationModalProps {
   e2eeEnabled: boolean;
   roomKeyBase64: string | null;
   keyFingerprint: string | null;
+  roomLifetime: RoomLifetimeInfo | null;
   peers: CollaboratorPresence[];
   onUpdateProfile: (name: string, color: string) => void;
   onJoinRoom: (nextRoomId: string) => void;
   onSetPassphrase: (passphrase: string) => Promise<void>;
+  onSetLifetime: (minutes: RoomLifetimeMinutes) => void;
   onClose: () => void;
 }
 
@@ -28,6 +35,14 @@ const USER_COLORS = [
   '#DB2777',
 ];
 
+function formatCountdown(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const hrs = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 export const CollaborationModal: React.FC<CollaborationModalProps> = ({
   roomId,
   clientId,
@@ -37,12 +52,20 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
   e2eeEnabled,
   roomKeyBase64,
   keyFingerprint,
+  roomLifetime,
   peers,
   onUpdateProfile,
   onJoinRoom,
   onSetPassphrase,
+  onSetLifetime,
   onClose,
 }) => {
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
   const [nameInput, setNameInput] = useState(userName);
   const [colorInput, setColorInput] = useState(userColor);
   const [roomInput, setRoomInput] = useState(roomId);
@@ -245,6 +268,72 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
             </button>
           </div>
         </form>
+
+        {/* Room Session Lifetime Selector (30m, 1h, 2h, 24h) */}
+        <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 inline-flex items-center gap-1.5">
+              <Clock3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span>Batas Masa Hidup Room (Session Lifetime)</span>
+            </span>
+            {roomLifetime && (
+              <span
+                className={`text-[11px] font-mono font-semibold tabular-nums ${
+                  roomLifetime.expiresAt - nowTick <= 60_000
+                    ? 'text-red-600 dark:text-red-400'
+                    : roomLifetime.expiresAt - nowTick <= 5 * 60_000
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400'
+                }`}
+              >
+                Sisa {formatCountdown(roomLifetime.expiresAt - nowTick)}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-4 gap-1.5">
+            {ROOM_LIFETIME_OPTIONS.map((opt) => {
+              const isSelected = roomLifetime?.lifetimeMinutes === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={!wsConnected}
+                  onClick={() => onSetLifetime(opt.value)}
+                  className={`h-9 px-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
+                    isSelected
+                      ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  } disabled:opacity-50`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            {roomLifetime ? (
+              <>
+                Berakhir otomatis pada{' '}
+                <strong className="text-slate-700 dark:text-slate-200 font-mono">
+                  {new Date(roomLifetime.expiresAt).toLocaleTimeString('id-ID', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                  {' · '}
+                  {new Date(roomLifetime.expiresAt).toLocaleDateString('id-ID', {
+                    day: '2-digit',
+                    month: 'short',
+                  })}
+                </strong>
+                . Room tetap bertahan selama masa aktif meski sempat kosong; tepat saat tenggat habis seluruh koneksi diputus paksa &amp; room dihapus otomatis.
+              </>
+            ) : (
+              'Pilih batas waktu pemakaian room. Saat tenggat berakhir, seluruh koneksi WebSocket diputus dan room dihapus dari memori server.'
+            )}
+          </p>
+        </div>
 
         {/* Project Passphrase Setting (E2EE) */}
         <form

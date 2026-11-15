@@ -16,6 +16,7 @@ import { NodeFormattingBar } from './components/NodeFormattingBar';
 import { PresentationHud } from './components/PresentationHud';
 import { TemplateModal } from './components/TemplateModal';
 import { ExportFormat, TopBar } from './components/TopBar';
+import { Clock3, AlertTriangle, PlusCircle, RefreshCw, X } from 'lucide-react';
 import {
   BoardDocument,
   CanvasEdge,
@@ -25,6 +26,9 @@ import {
   EncryptedEnvelope,
   InteractionTool,
   MediaAttachment,
+  ROOM_LIFETIME_OPTIONS,
+  RoomLifetimeInfo,
+  RoomLifetimeMinutes,
   TemplateId,
 } from './types/canvas';
 import {
@@ -150,9 +154,22 @@ export default function App() {
   // WebSocket Real-time State
   const [wsConnected, setWsConnected] = useState(false);
   const [peers, setPeers] = useState<CollaboratorPresence[]>([]);
+  const [roomLifetime, setRoomLifetime] = useState<RoomLifetimeInfo | null>(null);
+  const [sessionNowTick, setSessionNowTick] = useState(() => Date.now());
+  const [sessionWarningBanner, setSessionWarningBanner] = useState<{
+    remainingMinutes: number;
+    expiresAt: number;
+  } | null>(null);
+  const [expiredRoomNotice, setExpiredRoomNotice] = useState<{
+    roomId: string;
+    lifetimeMinutes: RoomLifetimeMinutes;
+    expiredAt: number;
+    reason: string;
+  } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const syncTimerRef = useRef<number | null>(null);
   const cursorThrottleRef = useRef<number>(0);
+  const roomExpiredStopReconnectRef = useRef<boolean>(false);
 
   // Refs for latest state inside socket callbacks
   const boardRef = useRef(board);
@@ -162,12 +179,21 @@ export default function App() {
   const e2eeEnabledRef = useRef(e2eeEnabled);
   e2eeEnabledRef.current = e2eeEnabled;
 
-  const showToast = useCallback((msg: string) => {
+  const showToast = useCallback((msg: string, durationMs = 2800) => {
     setToastMsg(msg);
     window.setTimeout(() => {
       setToastMsg((prev) => (prev === msg ? null : prev));
-    }, 2600);
+    }, durationMs);
   }, []);
+
+  useEffect(() => {
+    if (!roomLifetime || expiredRoomNotice) return;
+    setSessionNowTick(Date.now());
+    const timer = window.setInterval(() => {
+      setSessionNowTick(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [expiredRoomNotice, roomLifetime]);
 
   // Sync dark class on <html>
   useEffect(() => {
@@ -288,9 +314,10 @@ export default function App() {
     let reconnectTimer: number | null = null;
     let pingTimer: number | null = null;
     let reconnectDelay = 1800;
+    roomExpiredStopReconnectRef.current = false;
 
     function connect() {
-      if (unmounted) return;
+      if (unmounted || roomExpiredStopReconnectRef.current) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       let ws: WebSocket;
       try {
@@ -337,6 +364,10 @@ export default function App() {
             if (Array.isArray(msg.peers)) {
               setPeers(msg.peers);
             }
+            if (msg.lifetime) {
+              setRoomLifetime(msg.lifetime);
+              setSessionWarningBanner(null);
+            }
             if (msg.encrypted && msg.encryptedEnvelope) {
               setE2eeEnabled(true);
               await applyIncomingEnvelope(msg.encryptedEnvelope);
@@ -348,6 +379,51 @@ export default function App() {
               // Empty fresh room: seed server with our initial board (only if not waiting at password login)
               await transmitBoardSync(boardRef.current);
             }
+          } else if (msg.type === 'room:lifetime-updated') {
+            if (msg.lifetime) {
+              setRoomLifetime(msg.lifetime);
+              setSessionWarningBanner(null);
+              const optLabel =
+                ROOM_LIFETIME_OPTIONS.find((o) => o.value === msg.lifetime.lifetimeMinutes)
+                  ?.label ?? `${msg.lifetime.lifetimeMinutes} menit`;
+              const endClock = new Date(msg.lifetime.expiresAt).toLocaleTimeString('id-ID', {
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+              showToast(
+                `Batas masa hidup room diatur ke ${optLabel} oleh ${msg.updatedBy || 'Kolaborator'} (berakhir pukul ${endClock}).`,
+                4200
+              );
+            }
+          } else if (msg.type === 'room:warning') {
+            const rem = Number(msg.remainingMinutes) || 1;
+            setSessionWarningBanner({
+              remainingMinutes: rem,
+              expiresAt: Number(msg.expiresAt) || Date.now() + rem * 60_000,
+            });
+            showToast(
+              `Peringatan: Room akan ditutup paksa & dihapus dalam ${rem} menit!`,
+              5000
+            );
+          } else if (msg.type === 'room:expired') {
+            roomExpiredStopReconnectRef.current = true;
+            setWsConnected(false);
+            setPeers([]);
+            setRoomLifetime(null);
+            setSessionWarningBanner(null);
+            setShowCollab(false);
+            setExpiredRoomNotice({
+              roomId: msg.roomId || roomId,
+              lifetimeMinutes: msg.lifetimeMinutes || 120,
+              expiredAt: msg.expiredAt || Date.now(),
+              reason:
+                msg.reason ||
+                'Batas masa hidup pemakaian room kolaborasi telah habis.',
+            });
+            showToast(
+              'Waktu pemakaian room habis. Koneksi WebSocket diputus & room dihapus.',
+              5000
+            );
           } else if (msg.type === 'board:updated') {
             if (msg.senderId === clientId) return;
             if (msg.encrypted && msg.encryptedEnvelope) {
@@ -380,13 +456,28 @@ export default function App() {
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (closeEvent) => {
         if (pingTimer) {
           window.clearInterval(pingTimer);
           pingTimer = null;
         }
         if (unmounted) return;
         setWsConnected(false);
+        if (closeEvent.code === 4001 || roomExpiredStopReconnectRef.current) {
+          roomExpiredStopReconnectRef.current = true;
+          setPeers([]);
+          setRoomLifetime(null);
+          setSessionWarningBanner(null);
+          setExpiredRoomNotice((prev) =>
+            prev ?? {
+              roomId,
+              lifetimeMinutes: 120,
+              expiredAt: Date.now(),
+              reason: 'Batas masa hidup pemakaian room kolaborasi telah habis.',
+            }
+          );
+          return;
+        }
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(10000, Math.round(reconnectDelay * 1.5));
       };
@@ -404,7 +495,7 @@ export default function App() {
       }
       wsRef.current = null;
     };
-  }, [roomId, clientId, applyIncomingEnvelope, transmitBoardSync]);
+  }, [roomId, clientId, applyIncomingEnvelope, showToast, transmitBoardSync]);
 
   // Helper to commit board mutations with Undo/Redo & Real-time E2EE Sync
   const commitBoardChange = useCallback(
@@ -1272,12 +1363,16 @@ export default function App() {
     return true;
   };
 
-  const handleCreateOwnRoom = async () => {
+  const handleCreateOwnRoom = async (keepCurrentCanvas = false) => {
     const newRoomId = `ruang-${crypto.randomUUID().slice(0, 6)}`;
     const freshB64 = generateRoomKeyBase64();
     const imported = await importRawRoomKey(freshB64);
     const fp = await getKeyFingerprint(imported);
 
+    roomExpiredStopReconnectRef.current = false;
+    setExpiredRoomNotice(null);
+    setSessionWarningBanner(null);
+    setRoomLifetime(null);
     setRoomKeyBase64(freshB64);
     setCryptoKey(imported);
     cryptoKeyRef.current = imported;
@@ -1287,7 +1382,11 @@ export default function App() {
     setPendingEncryptedEnvelope(null);
     setIsLockedNeedsPassphrase(false);
     setDecryptError(null);
-    setBoard(buildTemplateBoard('mind-mapping', newRoomId));
+    if (keepCurrentCanvas) {
+      setBoard((prev) => ({ ...prev, id: newRoomId, updatedAt: Date.now() }));
+    } else {
+      setBoard(buildFromScratchBoard(newRoomId));
+    }
 
     const url = new URL(window.location.href);
     url.searchParams.set('room', newRoomId);
@@ -1328,6 +1427,10 @@ export default function App() {
   };
 
   const handleJoinRoom = (nextRoomId: string) => {
+    roomExpiredStopReconnectRef.current = false;
+    setExpiredRoomNotice(null);
+    setSessionWarningBanner(null);
+    setRoomLifetime(null);
     const params = new URLSearchParams(window.location.search);
     params.set('room', nextRoomId);
     window.history.replaceState(
@@ -1338,6 +1441,20 @@ export default function App() {
     setRoomId(nextRoomId);
     setShowCollab(false);
     showToast(`Bergabung ke ruang: ${nextRoomId}`);
+  };
+
+  const handleSetRoomLifetime = (minutes: RoomLifetimeMinutes) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showToast('WebSocket belum terhubung. Tidak dapat mengatur batas waktu room.');
+      return;
+    }
+    ws.send(
+      JSON.stringify({
+        type: 'room:set-lifetime',
+        lifetimeMinutes: minutes,
+      })
+    );
   };
 
   const selectedNode = useMemo(
@@ -1355,21 +1472,109 @@ export default function App() {
     [board.nodes, mediaModalNodeId]
   );
 
+  const { remainingSessionText, sessionUrgency } = useMemo(() => {
+    if (!roomLifetime || expiredRoomNotice) {
+      return { remainingSessionText: null, sessionUrgency: 'normal' as const };
+    }
+    const remainingMs = Math.max(0, roomLifetime.expiresAt - sessionNowTick);
+    const totalSec = Math.floor(remainingMs / 1000);
+    const hrs = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    const formatted =
+      hrs > 0
+        ? `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+        : `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    const urgency: 'normal' | 'warning' | 'critical' =
+      remainingMs <= 60_000 ? 'critical' : remainingMs <= 5 * 60_000 ? 'warning' : 'normal';
+    return { remainingSessionText: formatted, sessionUrgency: urgency };
+  }, [expiredRoomNotice, roomLifetime, sessionNowTick]);
+
+  const expiredModal = expiredRoomNotice && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/60 shadow-2xl p-5 sm:p-6 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Sesi Room Kolaborasi Berakhir
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                {expiredRoomNotice.roomId} ·{' '}
+                {ROOM_LIFETIME_OPTIONS.find((o) => o.value === expiredRoomNotice.lifetimeMinutes)
+                  ?.label ?? `${expiredRoomNotice.lifetimeMinutes} menit`}
+              </p>
+            </div>
+          </div>
+          {!isLockedNeedsPassphrase && (
+            <button
+              type="button"
+              onClick={() => setExpiredRoomNotice(null)}
+              aria-label="Tutup Notifikasi"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+          {expiredRoomNotice.reason} Server telah memutus paksa seluruh koneksi WebSocket dan menghapus data room tersebut dari memori pada pukul{' '}
+          <strong className="font-mono">
+            {new Date(expiredRoomNotice.expiredAt).toLocaleTimeString('id-ID', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })}
+          </strong>
+          .
+        </p>
+
+        <div className="flex flex-col gap-2 pt-1">
+          {!isLockedNeedsPassphrase && (
+            <button
+              type="button"
+              onClick={() => handleCreateOwnRoom(true)}
+              className="w-full h-10 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors inline-flex items-center justify-center gap-2"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Lanjutkan Kanvas Ini di Room Baru</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => handleCreateOwnRoom(false)}
+            className="w-full h-10 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 text-xs font-semibold transition-colors inline-flex items-center justify-center gap-2"
+          >
+            <PlusCircle className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span>Buat Room Kosong Baru (From Scratch)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (isLockedNeedsPassphrase) {
     return (
-      <CollaboratorInviteLogin
-        roomId={roomId}
-        initialName={userName}
-        initialColor={userColor}
-        wsConnected={wsConnected}
-        peerCount={Math.max(1, peers.length)}
-        envelopeFingerprint={pendingEncryptedEnvelope?.keyFingerprint ?? null}
-        decryptError={decryptError}
-        darkMode={darkMode}
-        onToggleTheme={() => setDarkMode((d) => !d)}
-        onSubmitLogin={handleInviteLoginSubmit}
-        onCreateOwnRoom={handleCreateOwnRoom}
-      />
+      <>
+        <CollaboratorInviteLogin
+          roomId={roomId}
+          initialName={userName}
+          initialColor={userColor}
+          wsConnected={wsConnected}
+          peerCount={Math.max(1, peers.length)}
+          envelopeFingerprint={pendingEncryptedEnvelope?.keyFingerprint ?? null}
+          decryptError={decryptError}
+          darkMode={darkMode}
+          onToggleTheme={() => setDarkMode((d) => !d)}
+          onSubmitLogin={handleInviteLoginSubmit}
+          onCreateOwnRoom={() => handleCreateOwnRoom(false)}
+        />
+        {expiredModal}
+      </>
     );
   }
 
@@ -1385,6 +1590,8 @@ export default function App() {
           darkMode={darkMode}
           canPresent={presentationOrder.length > 0}
           exportingFormat={exportingFormat}
+          remainingSessionText={remainingSessionText}
+          sessionUrgency={sessionUrgency}
           onChangeTitle={(title) =>
             commitBoardChange((prev) => ({
               ...prev,
@@ -1527,6 +1734,25 @@ export default function App() {
         />
       )}
 
+      {/* Low-Time Room Expiry Warning Banner */}
+      {!isPresenting && sessionWarningBanner && !expiredRoomNotice && (
+        <div className="fixed bottom-[76px] md:bottom-20 left-1/2 -translate-x-1/2 z-40 px-3.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/90 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-100 shadow-lg flex items-center gap-2.5 max-w-[calc(100vw-24px)] text-xs">
+          <Clock3 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <span className="font-medium">
+            Sisa waktu room{' '}
+            <strong className="font-mono">{remainingSessionText}</strong> — koneksi akan diputus &amp; room dihapus otomatis saat habis.
+          </span>
+          <button
+            type="button"
+            onClick={() => setSessionWarningBanner(null)}
+            aria-label="Tutup Peringatan"
+            className="p-0.5 rounded text-amber-700 dark:text-amber-300 hover:bg-amber-200/60 dark:hover:bg-amber-900/60 shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Toast Notification (positioned cleanly below formatting bar when active) */}
       {toastMsg && (
         <div
@@ -1560,10 +1786,12 @@ export default function App() {
           e2eeEnabled={e2eeEnabled}
           roomKeyBase64={roomKeyBase64}
           keyFingerprint={keyFingerprint}
+          roomLifetime={roomLifetime}
           peers={peers}
           onUpdateProfile={handleUpdateProfile}
           onJoinRoom={handleJoinRoom}
           onSetPassphrase={handleSetPassphrase}
+          onSetLifetime={handleSetRoomLifetime}
           onClose={() => setShowCollab(false)}
         />
       )}
@@ -1578,6 +1806,8 @@ export default function App() {
           onClose={() => setShowEncryption(false)}
         />
       )}
+
+      {expiredModal}
 
       {mediaModalNodeId && (
         <MediaModal

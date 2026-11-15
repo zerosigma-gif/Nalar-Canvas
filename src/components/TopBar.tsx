@@ -28,6 +28,8 @@ interface TopBarProps {
   darkMode: boolean;
   canPresent: boolean;
   exportingFormat: ExportFormat | null;
+  remainingSessionText?: string | null;
+  sessionUrgency?: 'normal' | 'warning' | 'critical';
   onChangeTitle: (nextTitle: string) => void;
   onOpenTemplates: () => void;
   onOpenCollaboration: () => void;
@@ -46,6 +48,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   darkMode,
   canPresent,
   exportingFormat,
+  remainingSessionText,
+  sessionUrgency = 'normal',
   onChangeTitle,
   onOpenTemplates,
   onOpenCollaboration,
@@ -124,11 +128,26 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button
           type="button"
           onClick={onOpenCollaboration}
+          title="Kolaborasi Real-Time & Batas Masa Hidup Room"
           className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 inline-flex items-center gap-1.5"
         >
           <span>Kolaborasi</span>
           <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
             · {wsConnected ? `${peerCount} aktif` : 'offline'}
+            {wsConnected && remainingSessionText && (
+              <span
+                className={
+                  sessionUrgency === 'critical'
+                    ? ' text-red-600 dark:text-red-400 font-semibold'
+                    : sessionUrgency === 'warning'
+                    ? ' text-amber-600 dark:text-amber-400 font-semibold'
+                    : ''
+                }
+              >
+                {' '}
+                · {remainingSessionText}
+              </span>
+            )}
             <span className="hidden xl:inline"> ({roomId})</span>
           </span>
         </button>
@@ -198,7 +217,9 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <span>Kolaborasi Real-Time</span>
                   </span>
                   <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                    {wsConnected ? `${peerCount} aktif` : 'offline'}
+                    {wsConnected
+                      ? `${peerCount} aktif${remainingSessionText ? ` · ${remainingSessionText}` : ''}`
+                      : 'offline'}
                   </span>
                 </button>
 

@@ -140,3 +140,18 @@ export interface EncryptedEnvelope {
 export type InteractionTool = 'select' | 'pan' | 'connect';
 
 export type StampFormat = 'full' | 'date-time' | 'time-only' | 'iso';
+
+export type RoomLifetimeMinutes = 30 | 60 | 120 | 1440;
+
+export const ROOM_LIFETIME_OPTIONS: { value: RoomLifetimeMinutes; label: string; shortLabel: string }[] = [
+  { value: 30, label: '30 Menit', shortLabel: '30m' },
+  { value: 60, label: '1 Jam', shortLabel: '1j' },
+  { value: 120, label: '2 Jam', shortLabel: '2j' },
+  { value: 1440, label: '24 Jam', shortLabel: '24j' },
+];
+
+export interface RoomLifetimeInfo {
+  lifetimeMinutes: RoomLifetimeMinutes;
+  createdAt: number;
+  expiresAt: number;
+}
