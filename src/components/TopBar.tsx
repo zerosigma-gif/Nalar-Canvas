@@ -15,7 +15,6 @@ import {
   X,
   LayoutGrid,
   Users,
-  Upload,
 } from 'lucide-react';
 
 export type ExportFormat = 'png' | 'pdf' | 'docx' | 'pptx' | 'md';
@@ -31,7 +30,6 @@ interface TopBarProps {
   exportingFormat: ExportFormat | null;
   onChangeTitle: (nextTitle: string) => void;
   onOpenTemplates: () => void;
-  onOpenImport: () => void;
   onOpenCollaboration: () => void;
   onOpenEncryption: () => void;
   onStartPresentation: () => void;
@@ -50,7 +48,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   exportingFormat,
   onChangeTitle,
   onOpenTemplates,
-  onOpenImport,
   onOpenCollaboration,
   onOpenEncryption,
   onStartPresentation,
@@ -192,21 +189,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                   type="button"
                   onClick={() => {
                     setMobileMenuOpen(false);
-                    onOpenImport();
-                  }}
-                  className="w-full min-h-[44px] px-3 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
-                >
-                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
-                    <Upload className="w-4 h-4 text-emerald-600" />
-                    <span>Impor Dokumen</span>
-                  </span>
-                  <span className="text-[11px] text-slate-400">docx / pptx / pdf</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
                     onOpenCollaboration();
                   }}
                   className="w-full min-h-[44px] px-3 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
@@ -289,16 +271,6 @@ export const TopBar: React.FC<TopBarProps> = ({
           className="w-10 h-10 md:w-9 md:h-9 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
         >
           {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-        </button>
-
-        <button
-          type="button"
-          onClick={onOpenImport}
-          title="Impor Dokumen (.docx, .pptx, .pdf) menjadi jaringan node"
-          className="hidden md:inline-flex h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-semibold transition-colors items-center gap-1.5 whitespace-nowrap shrink-0"
-        >
-          <Upload className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-          <span>Impor</span>
         </button>
 
         <div className="relative">

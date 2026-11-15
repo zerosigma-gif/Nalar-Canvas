@@ -11,7 +11,6 @@ import { CollaborationModal } from './components/CollaborationModal';
 import { CollaboratorInviteLogin } from './components/CollaboratorInviteLogin';
 import { EncryptionModal } from './components/EncryptionModal';
 import { FloatingToolbar } from './components/FloatingToolbar';
-import { ImportModal } from './components/ImportModal';
 import { MediaModal } from './components/MediaModal';
 import { NodeFormattingBar } from './components/NodeFormattingBar';
 import { PresentationHud } from './components/PresentationHud';
@@ -43,11 +42,6 @@ import {
   exportAsPng,
   exportAsPptx,
 } from './utils/exports';
-import {
-  buildBoardFromImport,
-  countImportedNodes,
-  DocumentImportResult,
-} from './utils/importDocument';
 import {
   buildFromScratchBoard,
   buildTemplateBoard,
@@ -123,7 +117,6 @@ export default function App() {
 
   // Modals
   const [showTemplates, setShowTemplates] = useState(false);
-  const [showImport, setShowImport] = useState(false);
   const [showCollab, setShowCollab] = useState(false);
   const [showEncryption, setShowEncryption] = useState(false);
   const [mediaModalNodeId, setMediaModalNodeId] = useState<string | null>(null);
@@ -829,31 +822,6 @@ export default function App() {
     showToast('Kanvas kosong (From Scratch) siap digunakan.');
   }, [commitBoardChange, roomId, showToast]);
 
-  // Apply Imported Document (.pdf / .docx / .pptx) as Node Network
-  const handleConfirmImport = useCallback(
-    (imported: DocumentImportResult) => {
-      const nextBoard = buildBoardFromImport({
-        imported,
-        templateId: boardRef.current.templateId,
-        existingBoard: boardRef.current,
-        roomId,
-      });
-      commitBoardChange(() => nextBoard, true, false);
-      setSelectedNodeId(null);
-      setConnectSourceId(null);
-      setTool('select');
-      setShowImport(false);
-      setTimeout(() => handleFitView(), 70);
-      const stats = countImportedNodes(imported.root);
-      showToast(
-        `Dokumen "${imported.fileName}" diimpor (${stats.nodes} node${
-          stats.tables > 0 ? `, ${stats.tables} tabel` : ''
-        }).`
-      );
-    },
-    [commitBoardChange, handleFitView, roomId, showToast]
-  );
-
   // Organize / Realign existing nodes into template pattern
   const handleOrganizeLayout = useCallback(
     (targetTemplateId?: TemplateId) => {
@@ -925,7 +893,6 @@ export default function App() {
       presentationOrder[0];
 
     setShowTemplates(false);
-    setShowImport(false);
     setShowCollab(false);
     setShowEncryption(false);
     setMediaModalNodeId(null);
@@ -1361,7 +1328,6 @@ export default function App() {
             }))
           }
           onOpenTemplates={() => setShowTemplates(true)}
-          onOpenImport={() => setShowImport(true)}
           onOpenCollaboration={() => setShowCollab(true)}
           onOpenEncryption={() => setShowEncryption(true)}
           onStartPresentation={handleStartPresentation}
@@ -1509,13 +1475,6 @@ export default function App() {
           onRealignToTemplate={(tplId) => handleOrganizeLayout(tplId)}
           onCreateFromScratch={handleCreateFromScratch}
           onClose={() => setShowTemplates(false)}
-        />
-      )}
-
-      {showImport && (
-        <ImportModal
-          onConfirmImport={handleConfirmImport}
-          onClose={() => setShowImport(false)}
         />
       )}
 
