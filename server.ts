@@ -92,7 +92,7 @@ async function startServer() {
 
   app.post('/api/import/document', async (req, res) => {
     try {
-      const { fileName, base64, mode } = req.body || {};
+      const { fileName, base64 } = req.body || {};
       if (typeof fileName !== 'string' || !fileName.trim()) {
         res.status(400).json({ error: 'Nama file dokumen wajib disertakan.' });
         return;
@@ -101,11 +101,9 @@ async function startServer() {
         res.status(400).json({ error: 'Konten file dokumen kosong atau tidak valid.' });
         return;
       }
-      const scanMode = mode === 'ai-semantic' ? 'ai-semantic' : 'structural';
       const result = await parseUploadedDocument({
         fileName: fileName.trim(),
         base64,
-        mode: scanMode,
       });
       res.json(result);
     } catch (err) {

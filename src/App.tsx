@@ -829,21 +829,12 @@ export default function App() {
     showToast('Kanvas kosong (From Scratch) siap digunakan.');
   }, [commitBoardChange, roomId, showToast]);
 
-  // Apply Imported Document (.docx / .pptx / .pdf) as Mind Map / Idea Node Architecture
+  // Apply Imported Document (.pdf / .docx / .pptx) as Node Network
   const handleConfirmImport = useCallback(
-    ({
-      imported,
-      templateId,
-      mode,
-    }: {
-      imported: DocumentImportResult;
-      templateId: TemplateId;
-      mode: 'replace' | 'merge';
-    }) => {
+    (imported: DocumentImportResult) => {
       const nextBoard = buildBoardFromImport({
         imported,
-        templateId,
-        mode,
+        templateId: boardRef.current.templateId,
         existingBoard: boardRef.current,
         roomId,
       });
@@ -1523,8 +1514,6 @@ export default function App() {
 
       {showImport && (
         <ImportModal
-          currentTemplateId={board.templateId}
-          hasExistingNodes={board.nodes.length > 0}
           onConfirmImport={handleConfirmImport}
           onClose={() => setShowImport(false)}
         />

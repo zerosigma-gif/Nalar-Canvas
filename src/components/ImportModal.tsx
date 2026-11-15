@@ -2,37 +2,26 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
-  FileCode2,
   FileSpreadsheet,
   FileText,
-  Layers,
   Loader2,
   Presentation,
-  Sparkles,
   Upload,
   X,
 } from 'lucide-react';
-import { TemplateId } from '../types/canvas';
 import {
   countImportedNodes,
   DocumentImportResult,
   ImportedIdeaNode,
   readFileAsBase64,
 } from '../utils/importDocument';
-import { TEMPLATE_CATALOG } from '../utils/templates';
 
 interface ImportModalProps {
-  currentTemplateId: TemplateId;
-  hasExistingNodes: boolean;
-  onConfirmImport: (opts: {
-    imported: DocumentImportResult;
-    templateId: TemplateId;
-    mode: 'replace' | 'merge';
-  }) => void;
+  onConfirmImport: (imported: DocumentImportResult) => void;
   onClose: () => void;
 }
 
-const ACCEPTED_EXTENSIONS = /\.(docx|pptx|pdf)$/i;
+const ACCEPTED_EXTENSIONS = /\.(pdf|docx|pptx)$/i;
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -45,7 +34,13 @@ const PreviewBranchList: React.FC<{ node: ImportedIdeaNode; depth?: number }> = 
   depth = 0,
 }) => {
   return (
-    <div className={depth > 0 ? 'pl-4 border-l border-slate-200 dark:border-slate-700 mt-1.5 space-y-1.5' : 'space-y-1.5'}>
+    <div
+      className={
+        depth > 0
+          ? 'pl-4 border-l border-slate-200 dark:border-slate-700 mt-1.5 space-y-1.5'
+          : 'space-y-1.5'
+      }
+    >
       <div className="flex items-start gap-2">
         <span
           className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${
@@ -83,19 +78,12 @@ const PreviewBranchList: React.FC<{ node: ImportedIdeaNode; depth?: number }> = 
 };
 
 export const ImportModal: React.FC<ImportModalProps> = ({
-  currentTemplateId,
-  hasExistingNodes,
   onConfirmImport,
   onClose,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [scanMode, setScanMode] = useState<'structural' | 'ai-semantic'>('structural');
-  const [targetTemplate, setTargetTemplate] = useState<TemplateId>(currentTemplateId);
-  const [applyMode, setApplyMode] = useState<'replace' | 'merge'>(
-    hasExistingNodes ? 'replace' : 'replace'
-  );
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<DocumentImportResult | null>(null);
@@ -105,9 +93,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     return countImportedNodes(scanResult.root);
   }, [scanResult]);
 
-  const handleScanFile = async (file: File, requestedMode: 'structural' | 'ai-semantic') => {
+  const handleScanFile = async (file: File) => {
     if (!ACCEPTED_EXTENSIONS.test(file.name)) {
-      setErrorMsg('Format berkas belum didukung. Pilih dokumen .docx, .pptx, atau .pdf.');
+      setErrorMsg('Format berkas belum didukung. Pilih dokumen .pdf, .docx, atau .pptx.');
       return;
     }
     if (file.size > 14 * 1024 * 1024) {
@@ -127,9 +115,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileName: file.name,
-          mimeType: file.type,
           base64,
-          mode: requestedMode,
         }),
       });
       const data = await res.json();
@@ -147,17 +133,10 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
   const handleFilePicked = (file?: File | null) => {
     if (!file) return;
-    handleScanFile(file, scanMode);
+    handleScanFile(file);
   };
 
-  const handleScanModeChange = (nextMode: 'structural' | 'ai-semantic') => {
-    setScanMode(nextMode);
-    if (selectedFile) {
-      handleScanFile(selectedFile, nextMode);
-    }
-  };
-
-  const formatBadge = (fmt?: 'docx' | 'pptx' | 'pdf') => {
+  const formatBadge = (fmt: 'docx' | 'pptx' | 'pdf') => {
     if (fmt === 'docx') {
       return {
         label: 'Word (.docx)',
@@ -171,7 +150,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       };
     }
     return {
-      label: 'Dokumen PDF (.pdf)',
+      label: 'PDF (.pdf)',
       icon: <FileText className="w-4 h-4 text-red-600" />,
     };
   };
@@ -182,17 +161,17 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden"
+        className="w-full max-w-2xl rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-5 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-4 shrink-0">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100">
-              Impor Dokumen ke Jaringan Node
+              Impor Dokumen
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Pindai file .docx, .pptx, atau .pdf untuk membangun struktur ide dan cabang pikiran secara otomatis.
+              Masukkan file berformat .pdf, .docx, atau .pptx untuk ditampilkan sebagai jaringan node.
             </p>
           </div>
           <button
@@ -206,8 +185,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
-          {/* Dropzone */}
+        <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-4">
+          {/* Dropzone for .pdf, .docx, .pptx only */}
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -220,7 +199,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
               handleFilePicked(e.dataTransfer.files?.[0]);
             }}
             onClick={() => fileInputRef.current?.click()}
-            className={`rounded-xl border-2 border-dashed p-5 sm:p-6 text-center cursor-pointer transition-colors ${
+            className={`rounded-xl border-2 border-dashed p-6 text-center cursor-pointer transition-colors ${
               dragActive
                 ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/30'
                 : 'border-slate-300 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-600 bg-slate-50/60 dark:bg-slate-950/40'
@@ -229,7 +208,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".docx,.pptx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/pdf"
+              accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation"
               onChange={(e) => handleFilePicked(e.target.files?.[0])}
               className="hidden"
             />
@@ -241,112 +220,31 @@ export const ImportModal: React.FC<ImportModalProps> = ({
               )}
             </div>
             <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              {selectedFile ? selectedFile.name : 'Pilih atau seret dokumen ke sini'}
+              {selectedFile ? selectedFile.name : 'Pilih atau seret dokumen (.pdf, .docx, .pptx)'}
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {selectedFile
-                ? `${formatFileSize(selectedFile.size)} · Klik untuk mengganti dokumen`
-                : 'Mendukung Microsoft Word (.docx), PowerPoint (.pptx), dan PDF (.pdf) hingga 14 MB'}
+                ? `${formatFileSize(selectedFile.size)} · Klik untuk mengganti file`
+                : 'Hanya mendukung format .pdf, .docx, dan .pptx (maks. 14 MB)'}
+            </div>
+
+            <div className="mt-4 flex items-center justify-center gap-3 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+              <span className="inline-flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-red-600" />
+                .pdf
+              </span>
+              <span className="text-slate-300 dark:text-slate-700">·</span>
+              <span className="inline-flex items-center gap-1">
+                <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-600" />
+                .docx
+              </span>
+              <span className="text-slate-300 dark:text-slate-700">·</span>
+              <span className="inline-flex items-center gap-1">
+                <Presentation className="w-3.5 h-3.5 text-amber-600" />
+                .pptx
+              </span>
             </div>
           </div>
-
-          {/* Scan Method & Layout Controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Metode Pemindaian Dokumen
-              </label>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleScanModeChange('structural')}
-                  className={`min-h-[42px] px-2.5 py-2 rounded-lg border text-left transition-colors ${
-                    scanMode === 'structural'
-                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300'
-                      : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    <FileCode2 className="w-3.5 h-3.5 shrink-0" />
-                    <span>Struktural</span>
-                  </div>
-                  <div className="text-[11px] opacity-75 mt-0.5">Heading, slide & tabel</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleScanModeChange('ai-semantic')}
-                  className={`min-h-[42px] px-2.5 py-2 rounded-lg border text-left transition-colors ${
-                    scanMode === 'ai-semantic'
-                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300'
-                      : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                    <span>Semantik AI</span>
-                  </div>
-                  <div className="text-[11px] opacity-75 mt-0.5">Ringkasan relasi konsep</div>
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="import-template-select"
-                  className="block text-xs font-semibold text-slate-700 dark:text-slate-300"
-                >
-                  Pola Arsitektur Kanvas
-                </label>
-                <select
-                  id="import-template-select"
-                  value={targetTemplate}
-                  onChange={(e) => setTargetTemplate(e.target.value as TemplateId)}
-                  className="w-full h-10 px-3 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {TEMPLATE_CATALOG.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>
-                      {tpl.name} — {tpl.subtitle}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {hasExistingNodes && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 bg-slate-50/70 dark:bg-slate-950/40">
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300">
-                <Layers className="w-4 h-4 text-slate-500 shrink-0" />
-                <span>Penempatan pada kanvas saat ini</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setApplyMode('replace')}
-                  className={`h-8 px-2.5 rounded-lg text-xs font-semibold transition-colors ${
-                    applyMode === 'replace'
-                      ? 'bg-slate-900 dark:bg-blue-600 text-white'
-                      : 'border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  Ganti Kanvas
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setApplyMode('merge')}
-                  className={`h-8 px-2.5 rounded-lg text-xs font-semibold transition-colors ${
-                    applyMode === 'merge'
-                      ? 'bg-slate-900 dark:bg-blue-600 text-white'
-                      : 'border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  Gabung ke Kanvas
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Error Feedback */}
           {errorMsg && (
@@ -360,7 +258,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           {loading && (
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-5 flex items-center justify-center gap-2.5 text-xs font-medium text-slate-600 dark:text-slate-300">
               <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-              <span>Memindai struktur dokumen & menyusun jaringan node…</span>
+              <span>Memindai isi dokumen menjadi jaringan node…</span>
             </div>
           )}
 
@@ -371,10 +269,6 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
                   {formatBadge(scanResult.format).icon}
                   <span>{formatBadge(scanResult.format).label}</span>
-                  <span className="text-slate-400">·</span>
-                  <span className="text-blue-600 dark:text-blue-400">
-                    {scanResult.method === 'ai-semantic' ? 'Analisis AI' : 'Ekstraksi Struktural'}
-                  </span>
                 </div>
                 <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
                   {previewStats.nodes} Node · {previewStats.tables} Tabel · {scanResult.pagesOrSlides}{' '}
@@ -382,7 +276,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 </div>
               </div>
 
-              <div className="p-4 max-h-60 overflow-y-auto">
+              <div className="p-4 max-h-64 overflow-y-auto">
                 <PreviewBranchList node={scanResult.root} />
               </div>
             </div>
@@ -393,8 +287,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         <div className="px-5 sm:px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/95 flex items-center justify-between gap-3 shrink-0">
           <div className="text-xs text-slate-500 dark:text-slate-400">
             {scanResult && previewStats
-              ? `Siap memetakan ${previewStats.nodes} node ke kanvas`
-              : 'Pilih dokumen .docx, .pptx, atau .pdf'}
+              ? `Siap menampilkan ${previewStats.nodes} node di kanvas`
+              : 'Format diterima: .pdf, .docx, .pptx'}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -409,11 +303,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
               disabled={!scanResult || loading}
               onClick={() => {
                 if (!scanResult) return;
-                onConfirmImport({
-                  imported: scanResult,
-                  templateId: targetTemplate,
-                  mode: applyMode,
-                });
+                onConfirmImport(scanResult);
                 onClose();
               }}
               className="h-10 sm:h-9 px-4 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-45 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"

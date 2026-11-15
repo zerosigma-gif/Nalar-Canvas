@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import JSZip from 'jszip';
 import mammoth from 'mammoth';
 import path from 'path';
@@ -19,7 +18,6 @@ export interface ImportedIdeaNode {
 export interface DocumentImportResult {
   fileName: string;
   format: 'docx' | 'pptx' | 'pdf';
-  method: 'structural' | 'ai-semantic';
   pagesOrSlides: number;
   root: ImportedIdeaNode;
 }
@@ -775,124 +773,16 @@ function buildPdfStructuralTree(
 }
 
 // ============================================================================
-// 4. OPTIONAL GEMINI AI SEMANTIC EXTRACTION (for Scanned PDFs or AI Mode)
-// ============================================================================
-async function extractTreeWithGemini(opts: {
-  fileName: string;
-  rawText?: string;
-  pdfBuffer?: Buffer;
-}): Promise<ImportedIdeaNode> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      'GEMINI_API_KEY belum dikonfigurasi di server untuk pemindaian AI atau PDF hasil scan gambar.'
-    );
-  }
-
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-
-  const instruction =
-    'Anda adalah arsitek pengetahuan. Ekstrak dokumen ini menjadi peta pikiran (mind map) hierarkis dalam bahasa dokumen aslinya (atau Bahasa Indonesia yang jelas). ' +
-    'Hasilkan 1 rootTitle utama, summary singkat, serta 3-8 cabang utama (branches), masing-masing dapat memiliki sub-ide (children) dan ringkasan isi yang padat serta informatif.';
-
-  const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
-  if (opts.pdfBuffer) {
-    parts.push({
-      inlineData: {
-        mimeType: 'application/pdf',
-        data: opts.pdfBuffer.toString('base64'),
-      },
-    });
-    parts.push({ text: `${instruction}\nNama file: ${opts.fileName}` });
-  } else {
-    const trimmed = (opts.rawText || '').slice(0, 32000);
-    parts.push({
-      text: `${instruction}\nNama file: ${opts.fileName}\n\nIsi Dokumen:\n${trimmed}`,
-    });
-  }
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-4-hydrogen',
-    contents: { parts },
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          rootTitle: { type: Type.STRING },
-          summary: { type: Type.STRING },
-          branches: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                body: { type: Type.STRING },
-                children: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      body: { type: Type.STRING },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  const jsonStr = (response.text ?? '{}').trim();
-  const parsed = JSON.parse(jsonStr) as {
-    rootTitle?: string;
-    summary?: string;
-    branches?: Array<{
-      title?: string;
-      body?: string;
-      children?: Array<{ title?: string; body?: string }>;
-    }>;
-  };
-
-  const root: ImportedIdeaNode = {
-    title: parsed.rootTitle?.trim() || cleanFileBaseName(opts.fileName),
-    body: parsed.summary?.trim() || '',
-    children: (parsed.branches ?? []).map((b) => ({
-      title: b.title?.trim() || 'Cabang Ide',
-      body: b.body?.trim() || '',
-      children: (b.children ?? []).map((c) => ({
-        title: c.title?.trim() || 'Sub-Ide',
-        body: c.body?.trim() || '',
-        children: [],
-      })),
-    })),
-  };
-
-  return normalizeTreeLimits(root);
-}
-
-// ============================================================================
-// MAIN DOCUMENT ENTRYPOINT
+// MAIN DOCUMENT ENTRYPOINT (.docx, .pptx, .pdf)
 // ============================================================================
 export async function parseUploadedDocument(params: {
   fileName: string;
   base64: string;
-  mode?: 'structural' | 'ai-semantic';
 }): Promise<DocumentImportResult> {
-  const { fileName, base64, mode = 'structural' } = params;
+  const { fileName, base64 } = params;
   const extMatch = fileName.toLowerCase().match(/\.(docx|pptx|pdf)$/);
   if (!extMatch) {
-    throw new Error('Format file tidak didukung. Gunakan file .docx, .pptx, atau .pdf.');
+    throw new Error('Format file tidak didukung. Gunakan file .pdf, .docx, atau .pptx.');
   }
 
   const format = extMatch[1] as 'docx' | 'pptx' | 'pdf';
@@ -905,20 +795,9 @@ export async function parseUploadedDocument(params: {
 
   if (format === 'docx') {
     const parsed = await parseDocxBuffer(buffer, fileName);
-    if (mode === 'ai-semantic' && parsed.rawText.trim().length > 20) {
-      const aiRoot = await extractTreeWithGemini({ fileName, rawText: parsed.rawText });
-      return {
-        fileName,
-        format,
-        method: 'ai-semantic',
-        pagesOrSlides: parsed.pagesOrSlides,
-        root: aiRoot,
-      };
-    }
     return {
       fileName,
       format,
-      method: 'structural',
       pagesOrSlides: parsed.pagesOrSlides,
       root: parsed.root,
     };
@@ -926,61 +805,26 @@ export async function parseUploadedDocument(params: {
 
   if (format === 'pptx') {
     const parsed = await parsePptxBuffer(buffer, fileName);
-    if (mode === 'ai-semantic' && parsed.rawText.trim().length > 20) {
-      const aiRoot = await extractTreeWithGemini({ fileName, rawText: parsed.rawText });
-      return {
-        fileName,
-        format,
-        method: 'ai-semantic',
-        pagesOrSlides: parsed.pagesOrSlides,
-        root: aiRoot,
-      };
-    }
     return {
       fileName,
       format,
-      method: 'structural',
       pagesOrSlides: parsed.pagesOrSlides,
       root: parsed.root,
     };
   }
 
-  // PDF handling
   const { numPages, lines, rawText } = await extractPdfLines(buffer);
-  const hasSelectableText = rawText.replace(/\s+/g, '').length >= 40;
+  const hasSelectableText = rawText.replace(/\s+/g, '').length >= 20;
 
   if (!hasSelectableText) {
-    // Scanned / image-only PDF: attempt Gemini multimodal extraction if available
-    if (process.env.GEMINI_API_KEY && buffer.length <= 14 * 1024 * 1024) {
-      const aiRoot = await extractTreeWithGemini({ fileName, pdfBuffer: buffer });
-      return {
-        fileName,
-        format: 'pdf',
-        method: 'ai-semantic',
-        pagesOrSlides: numPages,
-        root: aiRoot,
-      };
-    }
     throw new Error(
-      'PDF ini tampak seperti hasil scan gambar tanpa teks yang dapat diseleksi. Gunakan PDF berbasis teks atau aktifkan pemindaian AI dengan GEMINI_API_KEY.'
+      'Dokumen PDF ini tidak memiliki teks yang dapat dibaca (PDF hasil scan gambar belum didukung).'
     );
-  }
-
-  if (mode === 'ai-semantic') {
-    const aiRoot = await extractTreeWithGemini({ fileName, rawText });
-    return {
-      fileName,
-      format: 'pdf',
-      method: 'ai-semantic',
-      pagesOrSlides: numPages,
-      root: aiRoot,
-    };
   }
 
   return {
     fileName,
     format: 'pdf',
-    method: 'structural',
     pagesOrSlides: numPages,
     root: buildPdfStructuralTree(fileName, numPages, lines),
   };

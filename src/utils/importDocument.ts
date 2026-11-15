@@ -26,7 +26,6 @@ export interface ImportedIdeaNode {
 export interface DocumentImportResult {
   fileName: string;
   format: 'docx' | 'pptx' | 'pdf';
-  method: 'structural' | 'ai-semantic';
   pagesOrSlides: number;
   root: ImportedIdeaNode;
 }
@@ -86,11 +85,10 @@ export function countImportedNodes(node: ImportedIdeaNode): { nodes: number; tab
 export function buildBoardFromImport(params: {
   imported: DocumentImportResult;
   templateId: TemplateId;
-  mode: 'replace' | 'merge';
   existingBoard: BoardDocument;
   roomId: string;
 }): BoardDocument {
-  const { imported, templateId, mode, existingBoard, roomId } = params;
+  const { imported, templateId, existingBoard, roomId } = params;
   const connectorStyle = getConnectorStyleForTemplate(templateId);
   const nowStamp = formatStamp(new Date(), 'full');
 
@@ -188,51 +186,6 @@ export function buildBoardFromImport(params: {
   };
 
   walk(imported.root, null, 0, 0);
-
-  if (mode === 'merge' && existingBoard.nodes.length > 0) {
-    const tempImportedBoard = organizeBoardByTemplate(
-      {
-        id: existingBoard.id,
-        title: existingBoard.title,
-        templateId,
-        nodes: newNodes,
-        edges: newEdges,
-        updatedAt: Date.now(),
-      },
-      templateId
-    );
-
-    let maxExistingX = -Infinity;
-    let avgExistingY = 0;
-    for (const n of existingBoard.nodes) {
-      maxExistingX = Math.max(maxExistingX, n.x + n.width);
-      avgExistingY += n.y;
-    }
-    avgExistingY = Math.round(avgExistingY / existingBoard.nodes.length);
-
-    let minImpX = Infinity;
-    let minImpY = Infinity;
-    for (const n of tempImportedBoard.nodes) {
-      minImpX = Math.min(minImpX, n.x);
-      minImpY = Math.min(minImpY, n.y);
-    }
-
-    const shiftX = Math.round(maxExistingX + 180 - (Number.isFinite(minImpX) ? minImpX : 0));
-    const shiftY = Math.round(avgExistingY - (Number.isFinite(minImpY) ? minImpY : 0));
-
-    const shiftedNodes = tempImportedBoard.nodes.map((n) => ({
-      ...n,
-      x: n.x + shiftX,
-      y: n.y + shiftY,
-    }));
-
-    return {
-      ...existingBoard,
-      nodes: [...existingBoard.nodes, ...shiftedNodes],
-      edges: [...existingBoard.edges, ...tempImportedBoard.edges],
-      updatedAt: Date.now(),
-    };
-  }
 
   const rawBoard: BoardDocument = {
     id: existingBoard.id || roomId,
