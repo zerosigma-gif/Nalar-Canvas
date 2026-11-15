@@ -13,6 +13,7 @@ interface CanvasWorkspaceProps {
   edges: CanvasEdge[];
   templateId: TemplateId;
   selectedNodeId: string | null;
+  selectedEdgeId: string | null;
   connectSourceId: string | null;
   isPresenting?: boolean;
   tool: InteractionTool;
@@ -23,6 +24,7 @@ interface CanvasWorkspaceProps {
   clientId: string;
   onChangePanZoom: (pan: { x: number; y: number }, zoom: number) => void;
   onSelectNode: (nodeId: string | null) => void;
+  onSelectEdge: (edgeId: string | null) => void;
   onMoveNode: (nodeId: string, x: number, y: number, commit?: boolean) => void;
   onUpdateNode: (nodeId: string, patch: Partial<CanvasNode>) => void;
   onSpawnChild: (parentId: string) => void;
@@ -37,6 +39,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   edges,
   templateId,
   selectedNodeId,
+  selectedEdgeId,
   connectSourceId,
   isPresenting = false,
   tool,
@@ -47,6 +50,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   clientId,
   onChangePanZoom,
   onSelectNode,
+  onSelectEdge,
   onMoveNode,
   onUpdateNode,
   onSpawnChild,
@@ -58,6 +62,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [spacePressed, setSpacePressed] = useState(false);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [hoveredDeleteEdgeId, setHoveredDeleteEdgeId] = useState<string | null>(null);
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
 
   const dragRef = useRef<
@@ -230,7 +235,10 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     }
 
     if (e.button === 0) {
-      if (!isPresenting) onSelectNode(null);
+      if (!isPresenting) {
+        onSelectNode(null);
+        onSelectEdge(null);
+      }
       // Allow dragging empty canvas to pan smoothly
       e.currentTarget.setPointerCapture(e.pointerId);
       setIsDraggingCanvas(true);
@@ -432,24 +440,50 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
             }
 
             const isHovered = hoveredEdgeId === edge.id;
+            const isDeleteHovered = hoveredDeleteEdgeId === edge.id;
+            const isSelectedEdge = selectedEdgeId === edge.id;
+            const edgeStrokeColor = edge.color || '#64748B';
 
             return (
               <g key={edge.id} className="pointer-events-auto">
-                {/* Wide hit target for easy edge hover */}
+                {/* Wide hit target for easy edge hover & selection */}
                 <path
                   d={pathD}
                   fill="none"
                   stroke="transparent"
                   strokeWidth={16}
-                  className="cursor-pointer"
+                  className={isPresenting ? 'pointer-events-none' : 'cursor-pointer'}
                   onMouseEnter={() => setHoveredEdgeId(edge.id)}
                   onMouseLeave={() => setHoveredEdgeId(null)}
+                  onPointerDown={(e) => {
+                    if (!isPresenting && tool !== 'pan' && !spacePressed && e.button === 0) {
+                      e.stopPropagation();
+                    }
+                  }}
+                  onClick={(e) => {
+                    if (!isPresenting && tool !== 'pan' && !spacePressed) {
+                      e.stopPropagation();
+                      onSelectEdge(edge.id);
+                    }
+                  }}
                 />
+                {/* Soft color halo when connector line is selected */}
+                {isSelectedEdge && !isDeleteHovered && (
+                  <path
+                    d={pathD}
+                    fill="none"
+                    stroke={edgeStrokeColor}
+                    strokeOpacity={0.28}
+                    strokeWidth={8}
+                    strokeLinecap="round"
+                    className="pointer-events-none"
+                  />
+                )}
                 <path
                   d={pathD}
                   fill="none"
-                  stroke={isHovered ? '#EF4444' : edge.color || '#64748B'}
-                  strokeWidth={isHovered ? 3 : 2}
+                  stroke={isDeleteHovered ? '#EF4444' : edgeStrokeColor}
+                  strokeWidth={isDeleteHovered || isSelectedEdge ? 3.2 : isHovered ? 2.8 : 2}
                   strokeLinecap="round"
                   className="transition-colors pointer-events-none"
                 />
@@ -459,7 +493,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
                     role="button"
                     tabIndex={0}
                     aria-label="Hapus garis penghubung"
-                    transform={`translate(${midX}, ${midY}) scale(${isHovered ? 1.12 : 1})`}
+                    transform={`translate(${midX}, ${midY}) scale(${isDeleteHovered ? 1.12 : 1})`}
                     style={{ pointerEvents: 'all' }}
                     onPointerDown={(e) => {
                       e.stopPropagation();
@@ -475,21 +509,21 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
                         onDeleteEdge(edge.id);
                       }
                     }}
-                    onMouseEnter={() => setHoveredEdgeId(edge.id)}
-                    onMouseLeave={() => setHoveredEdgeId(null)}
+                    onMouseEnter={() => setHoveredDeleteEdgeId(edge.id)}
+                    onMouseLeave={() => setHoveredDeleteEdgeId(null)}
                     className="cursor-pointer"
                   >
                     <title>Hapus garis penghubung</title>
                     <circle r={16} fill="transparent" />
                     <circle
                       r={11}
-                      fill={isHovered ? '#EF4444' : darkMode ? '#0F172A' : '#FFFFFF'}
-                      stroke={isHovered ? '#DC2626' : darkMode ? '#991B1B' : '#FCA5A5'}
+                      fill={isDeleteHovered ? '#EF4444' : darkMode ? '#0F172A' : '#FFFFFF'}
+                      stroke={isDeleteHovered ? '#DC2626' : darkMode ? '#991B1B' : '#FCA5A5'}
                       strokeWidth={1.4}
                     />
                     <g
                       fill="none"
-                      stroke={isHovered ? '#FFFFFF' : '#EF4444'}
+                      stroke={isDeleteHovered ? '#FFFFFF' : '#EF4444'}
                       strokeWidth={1.5}
                       strokeLinecap="round"
                       strokeLinejoin="round"

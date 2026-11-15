@@ -110,10 +110,12 @@ export default function App() {
   // Tools & Selection
   const [tool, setTool] = useState<InteractionTool>('select');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [connectSourceId, setConnectSourceId] = useState<string | null>(null);
   const [autoOrganize, setAutoOrganize] = useState<boolean>(false);
   const autoOrganizeRef = useRef(autoOrganize);
   autoOrganizeRef.current = autoOrganize;
+  const edgeColorHistoryTimerRef = useRef<number | null>(null);
 
   // Modals
   const [showTemplates, setShowTemplates] = useState(false);
@@ -648,6 +650,13 @@ export default function App() {
       );
       if (selectedNodeId === nodeId) setSelectedNodeId(null);
       if (connectSourceId === nodeId) setConnectSourceId(null);
+      setSelectedEdgeId((prev) => {
+        if (!prev) return null;
+        const stillExists = boardRef.current.edges.some(
+          (e) => e.id === prev && e.sourceId !== nodeId && e.targetId !== nodeId
+        );
+        return stillExists ? prev : null;
+      });
     },
     [commitBoardChange, connectSourceId, selectedNodeId]
   );
@@ -719,9 +728,40 @@ export default function App() {
           edges: remainingEdges,
         };
       });
+      if (selectedEdgeId === edgeId) setSelectedEdgeId(null);
       showToast('Garis penghubung dihapus.');
     },
-    [commitBoardChange, showToast]
+    [commitBoardChange, selectedEdgeId, showToast]
+  );
+
+  const handleUpdateEdgesColor = useCallback(
+    (edgeIds: string[], color: string, live = false) => {
+      if (edgeIds.length === 0) return;
+      const targetSet = new Set(edgeIds);
+      let shouldRecordHistory = true;
+
+      if (live) {
+        if (edgeColorHistoryTimerRef.current !== null) {
+          shouldRecordHistory = false;
+          window.clearTimeout(edgeColorHistoryTimerRef.current);
+        }
+        edgeColorHistoryTimerRef.current = window.setTimeout(() => {
+          edgeColorHistoryTimerRef.current = null;
+        }, 700);
+      } else if (edgeColorHistoryTimerRef.current !== null) {
+        window.clearTimeout(edgeColorHistoryTimerRef.current);
+        edgeColorHistoryTimerRef.current = null;
+      }
+
+      commitBoardChange(
+        (prev) => ({
+          ...prev,
+          edges: prev.edges.map((e) => (targetSet.has(e.id) ? { ...e, color } : e)),
+        }),
+        shouldRecordHistory
+      );
+    },
+    [commitBoardChange]
   );
 
   // Stamp Day & Time handler
@@ -804,6 +844,7 @@ export default function App() {
       const next = buildTemplateBoard(tplId, roomId);
       commitBoardChange(() => next);
       setSelectedNodeId(null);
+      setSelectedEdgeId(null);
       setTimeout(() => handleFitView(), 60);
       showToast(`Template "${next.title}" diterapkan.`);
     },
@@ -815,6 +856,7 @@ export default function App() {
     const next = buildFromScratchBoard(roomId);
     commitBoardChange(() => next);
     setSelectedNodeId(null);
+    setSelectedEdgeId(null);
     setConnectSourceId(null);
     setTool('select');
     setPan({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
@@ -897,6 +939,7 @@ export default function App() {
     setShowEncryption(false);
     setMediaModalNodeId(null);
     setConnectSourceId(null);
+    setSelectedEdgeId(null);
     setTool('select');
     setPresentationAutoPlay(false);
     setIsPresenting(true);
@@ -929,12 +972,22 @@ export default function App() {
   const handleSelectNode = useCallback(
     (nodeId: string | null) => {
       setSelectedNodeId(nodeId);
+      if (nodeId) setSelectedEdgeId(null);
       if (isPresenting && nodeId) {
         const target = boardRef.current.nodes.find((n) => n.id === nodeId);
         if (target) focusNodeInViewport(target);
       }
     },
     [focusNodeInViewport, isPresenting]
+  );
+
+  const handleSelectEdge = useCallback(
+    (edgeId: string | null) => {
+      if (isPresenting) return;
+      setSelectedEdgeId(edgeId);
+      if (edgeId) setSelectedNodeId(null);
+    },
+    [isPresenting]
   );
 
   useEffect(() => {
@@ -1064,6 +1117,9 @@ export default function App() {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
         e.preventDefault();
         handleDeleteNode(selectedNodeId);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEdgeId) {
+        e.preventDefault();
+        handleDeleteEdge(selectedEdgeId);
       }
       if (e.key === '=' || e.key === '+') handleZoomIn();
       if (e.key === '-') handleZoomOut();
@@ -1073,6 +1129,7 @@ export default function App() {
       }
       if (e.key === 'Escape') {
         setConnectSourceId(null);
+        setSelectedEdgeId(null);
         setTool('select');
       }
     };
@@ -1080,6 +1137,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     handleAddFloatingNode,
+    handleDeleteEdge,
     handleDeleteNode,
     handleExitPresentation,
     handleOrganizeLayout,
@@ -1091,6 +1149,7 @@ export default function App() {
     handleZoomIn,
     handleZoomOut,
     isPresenting,
+    selectedEdgeId,
     selectedNodeId,
   ]);
 
@@ -1286,6 +1345,11 @@ export default function App() {
     [board.nodes, selectedNodeId]
   );
 
+  const selectedEdge = useMemo(
+    () => board.edges.find((e) => e.id === selectedEdgeId) ?? null,
+    [board.edges, selectedEdgeId]
+  );
+
   const mediaModalTargetNode = useMemo(
     () => board.nodes.find((n) => n.id === mediaModalNodeId) ?? null,
     [board.nodes, mediaModalNodeId]
@@ -1336,11 +1400,17 @@ export default function App() {
         />
       )}
 
-      {/* Contextual Rich Formatting Dock when a node is selected */}
-      {!isPresenting && selectedNode && (
+      {/* Contextual Rich Formatting Dock when a node or connector line is selected */}
+      {!isPresenting && (selectedNode || selectedEdge) && (
         <NodeFormattingBar
           node={selectedNode}
+          selectedEdge={selectedEdge}
+          nodes={board.nodes}
+          edges={board.edges}
           onUpdateNode={handleUpdateNode}
+          onUpdateEdgesColor={handleUpdateEdgesColor}
+          onDeleteEdge={handleDeleteEdge}
+          onDeselectEdge={() => setSelectedEdgeId(null)}
           onSpawnChild={handleSpawnChild}
           onDuplicateNode={handleDuplicateNode}
           onDeleteNode={handleDeleteNode}
@@ -1380,6 +1450,7 @@ export default function App() {
           edges={board.edges}
           templateId={board.templateId}
           selectedNodeId={selectedNodeId}
+          selectedEdgeId={selectedEdgeId}
           connectSourceId={connectSourceId}
           isPresenting={isPresenting}
           tool={tool}
@@ -1393,6 +1464,7 @@ export default function App() {
             setZoom(nextZoom);
           }}
           onSelectNode={handleSelectNode}
+          onSelectEdge={handleSelectEdge}
           onMoveNode={handleMoveNode}
           onUpdateNode={handleUpdateNode}
           onSpawnChild={handleSpawnChild}
@@ -1459,7 +1531,7 @@ export default function App() {
       {toastMsg && (
         <div
           className={`fixed right-3 sm:right-5 z-50 px-3.5 py-2 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium shadow-lg border border-slate-700 pointer-events-none max-w-[calc(100vw-24px)] ${
-            isPresenting ? 'top-4' : selectedNode ? 'top-[120px]' : 'top-16'
+            isPresenting ? 'top-4' : selectedNode || selectedEdge ? 'top-[120px]' : 'top-16'
           }`}
         >
           {toastMsg}
