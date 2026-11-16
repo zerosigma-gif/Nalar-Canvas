@@ -17,6 +17,8 @@ export const FONT_FAMILIES: { label: string; value: FontFamilyOption; category: 
   { label: 'JetBrains Mono', value: 'JetBrains Mono', category: 'Mono' },
 ];
 
+export type NodeTextTarget = 'title' | 'body';
+
 export interface NodeTextStyle {
   fontFamily: FontFamilyOption;
   fontSize: number;
@@ -82,6 +84,7 @@ export interface CanvasNode {
   symbols: string[];
   timestampStamp?: string | null;
   style: NodeTextStyle;
+  bodyStyle?: NodeTextStyle;
   surfaceColor: string;
   accentColor: string;
   collapsed?: boolean;

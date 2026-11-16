@@ -1,4 +1,5 @@
 import {
+  AlignmentType,
   BorderStyle,
   Document,
   HeadingLevel,
@@ -15,6 +16,7 @@ import { jsPDF } from 'jspdf';
 import PptxGenJS from 'pptxgenjs';
 import { BoardDocument, CanvasEdge, CanvasNode } from '../types/canvas';
 import { formatCellValue } from './tableFormat';
+import { resolveBodyStyle } from './templates';
 
 function sanitizeFileName(name: string): string {
   return (
@@ -128,14 +130,16 @@ export async function renderBoardToCanvas(
     const padX = 16;
     const innerW = w - padX * 2;
     const fontFamily = node.style.fontFamily || 'Plus Jakarta Sans';
-    const titleSize = Math.max(13, node.style.fontSize || 15);
-    const bodySize = Math.max(12, titleSize - 2);
+    const titleSize = Math.max(10, node.style.fontSize || 15);
+    const bStyle = resolveBodyStyle(node);
+    const bodyFontFamily = bStyle.fontFamily || 'Plus Jakarta Sans';
+    const bodySize = Math.max(10, bStyle.fontSize || 13);
 
     const prefix = node.symbols.length > 0 ? `${node.symbols.join(' ')} ` : '';
-    mctx.font = `${node.style.italic ? 'italic ' : ''}${node.style.bold ? '700' : '600'} ${titleSize}px "${fontFamily}", sans-serif`;
+    mctx.font = `${node.style.italic ? 'italic ' : ''}${node.style.bold ? '700' : '400'} ${titleSize}px "${fontFamily}", sans-serif`;
     const titleLines = wrapTextLines(mctx, `${prefix}${node.title}`, innerW);
 
-    mctx.font = `${node.style.italic ? 'italic ' : ''}400 ${bodySize}px "${fontFamily}", sans-serif`;
+    mctx.font = `${bStyle.italic ? 'italic ' : ''}${bStyle.bold ? '700' : '400'} ${bodySize}px "${bodyFontFamily}", sans-serif`;
     const bodyLines = node.body ? wrapTextLines(mctx, node.body, innerW) : [];
 
     let h = 16; // top padding
@@ -315,35 +319,59 @@ export async function renderBoardToCanvas(
     ctx.stroke();
 
     const fontFamily = node.style.fontFamily || 'Plus Jakarta Sans';
-    const titleSize = Math.max(13, node.style.fontSize || 15);
-    const bodySize = Math.max(12, titleSize - 2);
+    const titleSize = Math.max(10, node.style.fontSize || 15);
+    const bStyle = resolveBodyStyle(node);
+    const bodyFontFamily = bStyle.fontFamily || 'Plus Jakarta Sans';
+    const bodySize = Math.max(10, bStyle.fontSize || 13);
     const isDarkCard = node.surfaceColor === '#1E293B' || (darkMode && node.surfaceColor === '#FFFFFF');
     const textColor =
       isDarkCard && node.style.color === '#0F172A' ? '#F8FAFC' : node.style.color || '#0F172A';
+    const bodyTextColor =
+      isDarkCard && (bStyle.color === '#475569' || bStyle.color === '#0F172A')
+        ? '#CBD5E1'
+        : bStyle.color || '#475569';
 
     let cursorY = y + 16;
 
     // Title
+    const titleAlign = node.style.align || 'left';
     ctx.fillStyle = textColor;
-    ctx.font = `${node.style.italic ? 'italic ' : ''}${node.style.bold ? '700' : '600'} ${titleSize}px "${fontFamily}", sans-serif`;
+    ctx.font = `${node.style.italic ? 'italic ' : ''}${node.style.bold ? '700' : '400'} ${titleSize}px "${fontFamily}", sans-serif`;
     for (const line of titleLines) {
       cursorY += titleSize * 1.1;
-      ctx.fillText(line, x + 16, cursorY);
+      const lw = ctx.measureText(line).width;
+      const lineX =
+        titleAlign === 'center'
+          ? x + w / 2 - lw / 2
+          : titleAlign === 'right'
+          ? x + w - 16 - lw
+          : x + 16;
+      ctx.fillText(line, lineX, cursorY);
       if (node.style.underline) {
-        const lw = ctx.measureText(line).width;
-        ctx.fillRect(x + 16, cursorY + 2, lw, 1.2);
+        ctx.fillRect(lineX, cursorY + 2, lw, 1.2);
       }
       cursorY += titleSize * 0.25;
     }
 
     // Body
     if (bodyLines.length > 0) {
+      const bodyAlign = bStyle.align || 'left';
       cursorY += 6;
-      ctx.fillStyle = isDarkCard ? '#CBD5E1' : '#475569';
-      ctx.font = `${node.style.italic ? 'italic ' : ''}400 ${bodySize}px "${fontFamily}", sans-serif`;
+      ctx.fillStyle = bodyTextColor;
+      ctx.font = `${bStyle.italic ? 'italic ' : ''}${bStyle.bold ? '700' : '400'} ${bodySize}px "${bodyFontFamily}", sans-serif`;
       for (const line of bodyLines) {
         cursorY += bodySize * 1.15;
-        ctx.fillText(line, x + 16, cursorY);
+        const lw = ctx.measureText(line).width;
+        const lineX =
+          bodyAlign === 'center'
+            ? x + w / 2 - lw / 2
+            : bodyAlign === 'right'
+            ? x + w - 16 - lw
+            : x + 16;
+        ctx.fillText(line, lineX, cursorY);
+        if (bStyle.underline) {
+          ctx.fillRect(lineX, cursorY + 2, lw, 1.1);
+        }
         cursorY += bodySize * 0.3;
       }
     }
@@ -536,16 +564,23 @@ export async function exportAsDocx(doc: BoardDocument): Promise<void> {
   for (const node of doc.nodes) {
     const symbolPrefix = node.symbols.length ? `${node.symbols.join(' ')} ` : '';
     const hexColor = (node.style.color || '#0F172A').replace('#', '');
+    const titleAlignment =
+      node.style.align === 'center'
+        ? AlignmentType.CENTER
+        : node.style.align === 'right'
+        ? AlignmentType.RIGHT
+        : AlignmentType.LEFT;
     children.push(
       new Paragraph({
         heading: node.parentId ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
+        alignment: titleAlignment,
         spacing: { before: 200, after: 80 },
         children: [
           new TextRun({
             text: `${symbolPrefix}${node.title}`,
             font: node.style.fontFamily || 'Plus Jakarta Sans',
-            size: Math.max(22, (node.style.fontSize || 15) * 2),
-            bold: node.style.bold || !node.parentId,
+            size: Math.max(20, (node.style.fontSize || 15) * 2),
+            bold: node.style.bold,
             italics: node.style.italic,
             underline: node.style.underline ? {} : undefined,
             color: hexColor === 'FFFFFF' ? '0F172A' : hexColor,
@@ -555,17 +590,27 @@ export async function exportAsDocx(doc: BoardDocument): Promise<void> {
     );
 
     if (node.body) {
+      const bStyle = resolveBodyStyle(node);
+      const bodyHexColor = (bStyle.color || '#475569').replace('#', '');
+      const bodyAlignment =
+        bStyle.align === 'center'
+          ? AlignmentType.CENTER
+          : bStyle.align === 'right'
+          ? AlignmentType.RIGHT
+          : AlignmentType.LEFT;
       children.push(
         new Paragraph({
+          alignment: bodyAlignment,
           spacing: { after: 100 },
           children: [
             new TextRun({
               text: node.body,
-              font: node.style.fontFamily || 'Plus Jakarta Sans',
-              size: Math.max(20, (node.style.fontSize || 14) * 1.8),
-              italics: node.style.italic,
-              underline: node.style.underline ? {} : undefined,
-              color: '334155',
+              font: bStyle.fontFamily || 'Plus Jakarta Sans',
+              size: Math.max(18, (bStyle.fontSize || 13) * 2),
+              bold: bStyle.bold,
+              italics: bStyle.italic,
+              underline: bStyle.underline ? {} : undefined,
+              color: bodyHexColor === 'FFFFFF' ? '334155' : bodyHexColor,
             }),
           ],
         })
@@ -719,22 +764,30 @@ export async function exportAsPptx(doc: BoardDocument, darkMode: boolean): Promi
       y: 0.5,
       w: 11.9,
       h: 0.7,
-      fontSize: Math.max(20, (node.style.fontSize || 16) + 6),
-      bold: node.style.bold || true,
+      fontSize: Math.max(18, (node.style.fontSize || 15) + 6),
+      bold: node.style.bold,
       italic: node.style.italic,
       underline: node.style.underline ? { style: 'sng' } : undefined,
+      align: node.style.align || 'left',
       color: textColor === 'FFFFFF' ? '0F172A' : textColor,
       fontFace: node.style.fontFamily || 'Plus Jakarta Sans',
     });
 
     if (node.body) {
+      const bStyle = resolveBodyStyle(node);
+      const bodyColor = (bStyle.color || '#334155').replace('#', '');
       slide.addText(node.body, {
         x: 0.7,
         y: 1.35,
         w: node.media?.url ? 6.5 : 11.9,
         h: 1.6,
-        fontSize: 15,
-        color: '334155',
+        fontSize: Math.max(12, bStyle.fontSize || 13),
+        bold: bStyle.bold,
+        italic: bStyle.italic,
+        underline: bStyle.underline ? { style: 'sng' } : undefined,
+        align: bStyle.align || 'left',
+        fontFace: bStyle.fontFamily || 'Plus Jakarta Sans',
+        color: bodyColor === 'FFFFFF' ? '334155' : bodyColor,
         valign: 'top',
       });
     }
@@ -825,8 +878,20 @@ export function exportAsMarkdown(doc: BoardDocument): void {
     }
 
     if (node.body) {
+      const bStyle = resolveBodyStyle(node);
+      const formattedBody = node.body
+        .split('\n')
+        .map((line) => {
+          if (!line.trim()) return line;
+          let out = line;
+          if (bStyle.bold) out = `**${out}**`;
+          if (bStyle.italic) out = `*${out}*`;
+          if (bStyle.underline) out = `<u>${out}</u>`;
+          return out;
+        })
+        .join('\n');
       lines.push('');
-      lines.push(node.body);
+      lines.push(formattedBody);
     }
     if (node.timestampStamp) {
       lines.push('');

@@ -19,8 +19,36 @@ export const DEFAULT_TEXT_STYLE: NodeTextStyle = {
   align: 'left',
 };
 
+export const DEFAULT_BODY_STYLE: NodeTextStyle = {
+  fontFamily: 'Plus Jakarta Sans',
+  fontSize: 13,
+  bold: false,
+  italic: false,
+  underline: false,
+  color: '#475569',
+  align: 'left',
+};
+
+export function resolveBodyStyle(node: CanvasNode): NodeTextStyle {
+  if (node.bodyStyle) {
+    return {
+      ...DEFAULT_BODY_STYLE,
+      ...node.bodyStyle,
+    };
+  }
+  return {
+    ...DEFAULT_BODY_STYLE,
+    fontFamily: node.style.fontFamily || DEFAULT_BODY_STYLE.fontFamily,
+    fontSize: Math.max(12, (node.style.fontSize || 15) - 2),
+    italic: Boolean(node.style.italic),
+    underline: Boolean(node.style.underline),
+    align: node.style.align || 'left',
+  };
+}
+
 export const NODE_TEXT_COLORS = [
   '#0F172A',
+  '#475569',
   '#1E40AF',
   '#047857',
   '#B45309',
@@ -119,6 +147,10 @@ export function createBlankNode(partial: Partial<CanvasNode> = {}): CanvasNode {
     style: {
       ...DEFAULT_TEXT_STYLE,
       ...(partial.style ?? {}),
+    },
+    bodyStyle: {
+      ...DEFAULT_BODY_STYLE,
+      ...(partial.bodyStyle ?? {}),
     },
     surfaceColor: partial.surfaceColor ?? '#FFFFFF',
     accentColor: partial.accentColor ?? '#2563EB',

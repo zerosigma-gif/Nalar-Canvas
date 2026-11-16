@@ -13,7 +13,9 @@ import {
   CollaboratorPresence,
   DynamicTableData,
   InteractionTool,
+  NodeTextTarget,
 } from '../types/canvas';
+import { resolveBodyStyle } from '../utils/templates';
 import { DynamicTableEditor } from './DynamicTableEditor';
 
 interface CanvasNodeCardProps {
@@ -27,6 +29,7 @@ interface CanvasNodeCardProps {
   childCount: number;
   remoteSelectors: CollaboratorPresence[];
   onSelect: (nodeId: string, multi?: boolean) => void;
+  onFocusTextTarget?: (nodeId: string, target: NodeTextTarget) => void;
   onStartDrag: (e: React.PointerEvent, nodeId: string) => void;
   onUpdateNode: (nodeId: string, patch: Partial<CanvasNode>) => void;
   onSpawnChild: (parentId: string) => void;
@@ -44,6 +47,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
   childCount,
   remoteSelectors,
   onSelect,
+  onFocusTextTarget,
   onStartDrag,
   onUpdateNode,
   onSpawnChild,
@@ -52,17 +56,36 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
 }) => {
   const [editing, setEditing] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
-  const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleInputRef = useRef<HTMLTextAreaElement>(null);
+  const bodyInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingEditTargetRef = useRef<NodeTextTarget>('title');
 
   useEffect(() => {
     setImgFailed(false);
   }, [node.media?.url]);
 
   useEffect(() => {
+    if (!isSelected && editing) {
+      setEditing(false);
+    }
+  }, [isSelected, editing]);
+
+  useEffect(() => {
     if (editing) {
-      titleInputRef.current?.focus();
+      if (pendingEditTargetRef.current === 'body' && bodyInputRef.current) {
+        bodyInputRef.current.focus();
+      } else {
+        titleInputRef.current?.focus();
+      }
     }
   }, [editing]);
+
+  useEffect(() => {
+    if (!editing || !titleInputRef.current) return;
+    const el = titleInputRef.current;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editing, node.title, node.style.fontSize, node.style.fontFamily, node.width]);
 
   const isDarkCard =
     node.surfaceColor === '#1E293B' || (darkMode && node.surfaceColor === '#FFFFFF');
@@ -72,6 +95,11 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
     isDarkCard && node.style.color === '#0F172A'
       ? '#F8FAFC'
       : node.style.color || '#0F172A';
+  const bodyStyle = resolveBodyStyle(node);
+  const resolvedBodyColor =
+    isDarkCard && (bodyStyle.color === '#475569' || bodyStyle.color === '#0F172A')
+      ? '#CBD5E1'
+      : bodyStyle.color || '#475569';
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (isPresenting) {
@@ -113,7 +141,11 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
       onPointerDown={handlePointerDown}
       onDoubleClick={(e) => {
         e.stopPropagation();
-        if (!isPresenting) setEditing(true);
+        if (!isPresenting) {
+          pendingEditTargetRef.current = 'title';
+          onSelect(node.id, false);
+          setEditing(true);
+        }
       }}
       className={`group absolute top-0 left-0 rounded-xl border transition-all duration-300 select-none ${
         isPresenting
@@ -167,33 +199,40 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
             )}
 
             {editing ? (
-              <input
+              <textarea
                 ref={titleInputRef}
-                type="text"
+                rows={1}
                 value={node.title}
+                onFocus={() => onFocusTextTarget?.(node.id, 'title')}
                 onChange={(e) => onUpdateNode(node.id, { title: e.target.value })}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') setEditing(false);
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    setEditing(false);
+                  }
                   if (e.key === 'Escape') setEditing(false);
                 }}
-                onPointerDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  onFocusTextTarget?.(node.id, 'title');
+                }}
                 style={{
                   fontFamily: `"${node.style.fontFamily}", sans-serif`,
                   fontSize: `${node.style.fontSize}px`,
-                  fontWeight: node.style.bold ? 700 : 600,
+                  fontWeight: node.style.bold ? 700 : 400,
                   fontStyle: node.style.italic ? 'italic' : 'normal',
                   textDecoration: node.style.underline ? 'underline' : 'none',
                   color: resolvedTextColor,
                   textAlign: node.style.align || 'left',
                 }}
-                className="w-full bg-white/80 dark:bg-slate-950/60 border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none"
+                className="w-full leading-snug break-words bg-white/80 dark:bg-slate-950/60 border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none resize-none overflow-hidden"
               />
             ) : (
               <div
                 style={{
                   fontFamily: `"${node.style.fontFamily}", sans-serif`,
                   fontSize: `${node.style.fontSize}px`,
-                  fontWeight: node.style.bold ? 700 : 600,
+                  fontWeight: node.style.bold ? 700 : 400,
                   fontStyle: node.style.italic ? 'italic' : 'normal',
                   textDecoration: node.style.underline ? 'underline' : 'none',
                   color: resolvedTextColor,
@@ -212,6 +251,10 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
+                if (!editing) {
+                  pendingEditTargetRef.current = 'title';
+                  onSelect(node.id, false);
+                }
                 setEditing((v) => !v);
               }}
               className={`p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-opacity shrink-0 ${
@@ -230,33 +273,48 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
         {/* Body text */}
         {editing ? (
           <textarea
+            ref={bodyInputRef}
             value={node.body}
             rows={3}
+            onFocus={() => onFocusTextTarget?.(node.id, 'body')}
             onChange={(e) => onUpdateNode(node.id, { body: e.target.value })}
-            onPointerDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onFocusTextTarget?.(node.id, 'body');
+            }}
             placeholder="Tambahkan catatan ide, deskripsi, atau detail..."
             style={{
-              fontFamily: `"${node.style.fontFamily}", sans-serif`,
-              fontSize: `${Math.max(12, node.style.fontSize - 2)}px`,
-              fontStyle: node.style.italic ? 'italic' : 'normal',
-              textDecoration: node.style.underline ? 'underline' : 'none',
-              textAlign: node.style.align || 'left',
+              fontFamily: `"${bodyStyle.fontFamily}", sans-serif`,
+              fontSize: `${bodyStyle.fontSize}px`,
+              fontWeight: bodyStyle.bold ? 700 : 400,
+              fontStyle: bodyStyle.italic ? 'italic' : 'normal',
+              textDecoration: bodyStyle.underline ? 'underline' : 'none',
+              color: resolvedBodyColor,
+              textAlign: bodyStyle.align || 'left',
             }}
-            className="mt-2 w-full bg-white/80 dark:bg-slate-950/60 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1.5 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y"
+            className="mt-2 w-full bg-white/80 dark:bg-slate-950/60 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y"
           />
         ) : (
           node.body && (
             <p
-              style={{
-                fontFamily: `"${node.style.fontFamily}", sans-serif`,
-                fontSize: `${Math.max(12, node.style.fontSize - 2)}px`,
-                fontStyle: node.style.italic ? 'italic' : 'normal',
-                textDecoration: node.style.underline ? 'underline' : 'none',
-                textAlign: node.style.align || 'left',
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                if (!isPresenting) {
+                  pendingEditTargetRef.current = 'body';
+                  onFocusTextTarget?.(node.id, 'body');
+                  setEditing(true);
+                }
               }}
-              className={`mt-1.5 leading-relaxed whitespace-pre-wrap break-words ${
-                isDarkCard ? 'text-slate-300' : 'text-slate-600 dark:text-slate-300'
-              }`}
+              style={{
+                fontFamily: `"${bodyStyle.fontFamily}", sans-serif`,
+                fontSize: `${bodyStyle.fontSize}px`,
+                fontWeight: bodyStyle.bold ? 700 : 400,
+                fontStyle: bodyStyle.italic ? 'italic' : 'normal',
+                textDecoration: bodyStyle.underline ? 'underline' : 'none',
+                color: resolvedBodyColor,
+                textAlign: bodyStyle.align || 'left',
+              }}
+              className="mt-1.5 leading-relaxed whitespace-pre-wrap break-words"
             >
               {node.body}
             </p>

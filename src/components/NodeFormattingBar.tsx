@@ -22,12 +22,14 @@ import {
   CanvasNode,
   FONT_FAMILIES,
   FontFamilyOption,
+  NodeTextTarget,
 } from '../types/canvas';
 import {
   ACCENT_COLORS,
   NODE_SURFACE_COLORS,
   NODE_TEXT_COLORS,
   createDefaultTable,
+  resolveBodyStyle,
 } from '../utils/templates';
 import { SymbolPopover } from './SymbolPopover';
 
@@ -36,6 +38,8 @@ interface NodeFormattingBarProps {
   selectedEdge: CanvasEdge | null;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  activeTextTarget: NodeTextTarget;
+  onChangeTextTarget: (target: NodeTextTarget) => void;
   onUpdateNode: (nodeId: string, patch: Partial<CanvasNode>) => void;
   onUpdateEdgesColor: (edgeIds: string[], color: string, live?: boolean) => void;
   onDeleteEdge: (edgeId: string) => void;
@@ -46,7 +50,7 @@ interface NodeFormattingBarProps {
   onOpenMediaModal: (nodeId: string) => void;
 }
 
-const FONT_SIZES = [12, 13, 14, 15, 16, 18, 20, 24, 28, 34];
+const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20, 24, 28, 34];
 const CONNECTOR_PRESET_COLORS = ['#64748B', ...ACCENT_COLORS];
 
 export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
@@ -54,6 +58,8 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
   selectedEdge,
   nodes,
   edges,
+  activeTextTarget,
+  onChangeTextTarget,
   onUpdateNode,
   onUpdateEdgesColor,
   onDeleteEdge,
@@ -173,11 +179,28 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
 
   const connectedEdgeIds = connectedEdges.map((e) => e.id);
   const primaryEdgeColor = connectedEdges[0]?.color || node.accentColor || '#64748B';
+  const activeStyle = activeTextTarget === 'body' ? resolveBodyStyle(node) : node.style;
+  const targetLabel = activeTextTarget === 'body' ? 'Isi' : 'Judul';
+  const currentAlign = activeStyle.align || 'left';
+  const alignLabel =
+    currentAlign === 'center' ? 'Tengah' : currentAlign === 'right' ? 'Kanan' : 'Kiri';
 
   const updateStyle = (patch: Partial<CanvasNode['style']>) => {
-    onUpdateNode(node.id, {
+    if (activeTextTarget === 'body') {
+      const currentBody = resolveBodyStyle(node);
+      onUpdateNode(node.id, {
+        bodyStyle: { ...currentBody, ...patch },
+      });
+      return;
+    }
+
+    const nextPatch: Partial<CanvasNode> = {
       style: { ...node.style, ...patch },
-    });
+    };
+    if (!node.bodyStyle) {
+      nextPatch.bodyStyle = resolveBodyStyle(node);
+    }
+    onUpdateNode(node.id, nextPatch);
   };
 
   const handleToggleSymbol = (sym: string) => {
@@ -211,12 +234,48 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-1 px-2 py-1.5 overflow-x-auto">
+          {/* Target Selector: Judul vs Isi */}
+          <div
+            role="group"
+            aria-label="Target Pengaturan Teks"
+            className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0"
+          >
+            <button
+              type="button"
+              onClick={() => onChangeTextTarget('title')}
+              aria-pressed={activeTextTarget === 'title'}
+              title="Atur jenis huruf, ukuran, perataan & gaya teks Judul node"
+              className={`h-8 md:h-7 px-2 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                activeTextTarget === 'title'
+                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Judul
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeTextTarget('body')}
+              aria-pressed={activeTextTarget === 'body'}
+              title="Atur jenis huruf, ukuran, perataan & gaya teks Isi / Catatan node"
+              className={`h-8 md:h-7 px-2 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                activeTextTarget === 'body'
+                  ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Isi
+            </button>
+          </div>
+
+          <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+
           {/* Font Family */}
           <select
-            value={node.style.fontFamily}
+            value={activeStyle.fontFamily}
             onChange={(e) => updateStyle({ fontFamily: e.target.value as FontFamilyOption })}
-            title="Jenis Huruf"
-            aria-label="Jenis Huruf"
+            title={`Jenis Huruf (${targetLabel})`}
+            aria-label={`Jenis Huruf ${targetLabel}`}
             className="h-9 md:h-8 px-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-[128px] shrink-0"
           >
             {FONT_FAMILIES.map((f) => (
@@ -228,10 +287,10 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
 
           {/* Font Size */}
           <select
-            value={node.style.fontSize}
+            value={activeStyle.fontSize}
             onChange={(e) => updateStyle({ fontSize: Number(e.target.value) })}
-            title="Ukuran Huruf"
-            aria-label="Ukuran Huruf"
+            title={`Ukuran Huruf (${targetLabel})`}
+            aria-label={`Ukuran Huruf ${targetLabel}`}
             className="h-9 md:h-8 px-1.5 text-xs font-mono tabular-nums rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500 shrink-0"
           >
             {FONT_SIZES.map((sz) => (
@@ -246,11 +305,12 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
           {/* Bold / Italic / Underline */}
           <button
             type="button"
-            onClick={() => updateStyle({ bold: !node.style.bold })}
-            title="Tebal (Bold)"
-            aria-label="Tebal"
+            onClick={() => updateStyle({ bold: !activeStyle.bold })}
+            aria-pressed={activeStyle.bold}
+            title={`Tebal (${targetLabel})`}
+            aria-label={`Tebal ${targetLabel}`}
             className={`w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 ${
-              node.style.bold
+              activeStyle.bold
                 ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
@@ -259,11 +319,12 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => updateStyle({ italic: !node.style.italic })}
-            title="Miring (Italic)"
-            aria-label="Miring"
+            onClick={() => updateStyle({ italic: !activeStyle.italic })}
+            aria-pressed={activeStyle.italic}
+            title={`Miring (${targetLabel})`}
+            aria-label={`Miring ${targetLabel}`}
             className={`w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 ${
-              node.style.italic
+              activeStyle.italic
                 ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
@@ -272,11 +333,12 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => updateStyle({ underline: !node.style.underline })}
-            title="Garis Bawah (Underline)"
-            aria-label="Garis Bawah"
+            onClick={() => updateStyle({ underline: !activeStyle.underline })}
+            aria-pressed={activeStyle.underline}
+            title={`Garis Bawah (${targetLabel})`}
+            aria-label={`Garis Bawah ${targetLabel}`}
             className={`w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 ${
-              node.style.underline
+              activeStyle.underline
                 ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
@@ -289,20 +351,20 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
             type="button"
             onClick={() => {
               const next =
-                node.style.align === 'left' || !node.style.align
+                currentAlign === 'left'
                   ? 'center'
-                  : node.style.align === 'center'
+                  : currentAlign === 'center'
                   ? 'right'
                   : 'left';
               updateStyle({ align: next });
             }}
-            title="Perataan Teks"
-            aria-label="Perataan Teks"
+            title={`Perataan Teks (${targetLabel}): ${alignLabel}`}
+            aria-label={`Perataan Teks ${targetLabel}: ${alignLabel}`}
             className="w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
           >
-            {node.style.align === 'center' ? (
+            {currentAlign === 'center' ? (
               <AlignCenter className="w-3.5 h-3.5" />
-            ) : node.style.align === 'right' ? (
+            ) : currentAlign === 'right' ? (
               <AlignRight className="w-3.5 h-3.5" />
             ) : (
               <AlignLeft className="w-3.5 h-3.5" />
@@ -319,8 +381,8 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
               setShowEdgeColorMenu(false);
               setShowSymbolMenu(false);
             }}
-            title="Warna Huruf & Kartu"
-            aria-label="Warna Huruf dan Kartu"
+            title={`Warna Huruf (${targetLabel}) & Kartu`}
+            aria-label={`Warna Huruf ${targetLabel} dan Kartu`}
             className={`h-9 md:h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0 ${
               showColorMenu
                 ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
@@ -330,7 +392,7 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
             <Palette className="w-3.5 h-3.5" />
             <span
               className="w-3 h-3 rounded-full border border-slate-300"
-              style={{ backgroundColor: node.style.color }}
+              style={{ backgroundColor: activeStyle.color }}
             />
           </button>
 
@@ -467,14 +529,14 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                  Warna Huruf
+                  Warna Huruf ({targetLabel})
                 </span>
                 <input
                   type="color"
-                  value={node.style.color}
+                  value={activeStyle.color}
                   onChange={(e) => updateStyle({ color: e.target.value })}
                   className="w-6 h-5 cursor-pointer rounded border-0 bg-transparent"
-                  title="Pilih Warna Huruf Kustom"
+                  title={`Pilih Warna Huruf ${targetLabel} Kustom`}
                 />
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -485,7 +547,7 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
                     onClick={() => updateStyle({ color: c })}
                     style={{ backgroundColor: c }}
                     className={`w-6 h-6 rounded-md border ${
-                      node.style.color === c
+                      activeStyle.color === c
                         ? 'ring-2 ring-blue-500 border-white'
                         : 'border-slate-300 dark:border-slate-700'
                     }`}

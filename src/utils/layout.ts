@@ -5,18 +5,20 @@ import {
   ConnectorStyle,
   TemplateId,
 } from '../types/canvas';
+import { resolveBodyStyle } from './templates';
 
 export function estimateNodeHeight(node: CanvasNode): number {
   const width = Math.max(180, node.width || 248);
   const innerW = Math.max(120, width - 32);
-  const titleSize = Math.max(13, node.style.fontSize || 15);
+  const titleSize = Math.max(11, node.style.fontSize || 15);
   const charsPerTitleLine = Math.max(12, Math.floor(innerW / (titleSize * 0.56)));
   const titleLines = Math.max(1, Math.ceil((node.title || 'Ide').length / charsPerTitleLine));
 
   let h = 28 + titleLines * Math.ceil(titleSize * 1.38);
 
   if (node.body && node.body.trim().length > 0) {
-    const bodySize = Math.max(12, titleSize - 2);
+    const bStyle = resolveBodyStyle(node);
+    const bodySize = Math.max(10, bStyle.fontSize || 13);
     const charsPerBodyLine = Math.max(16, Math.floor(innerW / (bodySize * 0.54)));
     const paragraphs = node.body.split('\n');
     let bodyLines = 0;

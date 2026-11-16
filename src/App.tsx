@@ -26,6 +26,7 @@ import {
   EncryptedEnvelope,
   InteractionTool,
   MediaAttachment,
+  NodeTextTarget,
   ROOM_LIFETIME_OPTIONS,
   RoomLifetimeInfo,
   RoomLifetimeMinutes,
@@ -115,6 +116,7 @@ export default function App() {
   const [tool, setTool] = useState<InteractionTool>('select');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [activeTextTarget, setActiveTextTarget] = useState<NodeTextTarget>('title');
   const [connectSourceId, setConnectSourceId] = useState<string | null>(null);
   const [autoOrganize, setAutoOrganize] = useState<boolean>(false);
   const autoOrganizeRef = useRef(autoOrganize);
@@ -1062,6 +1064,9 @@ export default function App() {
 
   const handleSelectNode = useCallback(
     (nodeId: string | null) => {
+      if (nodeId !== selectedNodeId) {
+        setActiveTextTarget('title');
+      }
       setSelectedNodeId(nodeId);
       if (nodeId) setSelectedEdgeId(null);
       if (isPresenting && nodeId) {
@@ -1069,7 +1074,7 @@ export default function App() {
         if (target) focusNodeInViewport(target);
       }
     },
-    [focusNodeInViewport, isPresenting]
+    [focusNodeInViewport, isPresenting, selectedNodeId]
   );
 
   const handleSelectEdge = useCallback(
@@ -1079,6 +1084,15 @@ export default function App() {
       if (edgeId) setSelectedNodeId(null);
     },
     [isPresenting]
+  );
+
+  const handleFocusTextTarget = useCallback(
+    (nodeId: string, target: NodeTextTarget) => {
+      setSelectedNodeId(nodeId);
+      setSelectedEdgeId(null);
+      setActiveTextTarget(target);
+    },
+    []
   );
 
   useEffect(() => {
@@ -1614,6 +1628,8 @@ export default function App() {
           selectedEdge={selectedEdge}
           nodes={board.nodes}
           edges={board.edges}
+          activeTextTarget={activeTextTarget}
+          onChangeTextTarget={setActiveTextTarget}
           onUpdateNode={handleUpdateNode}
           onUpdateEdgesColor={handleUpdateEdgesColor}
           onDeleteEdge={handleDeleteEdge}
@@ -1672,6 +1688,7 @@ export default function App() {
           }}
           onSelectNode={handleSelectNode}
           onSelectEdge={handleSelectEdge}
+          onFocusTextTarget={handleFocusTextTarget}
           onMoveNode={handleMoveNode}
           onUpdateNode={handleUpdateNode}
           onSpawnChild={handleSpawnChild}

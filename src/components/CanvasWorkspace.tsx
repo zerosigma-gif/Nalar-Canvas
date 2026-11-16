@@ -4,6 +4,7 @@ import {
   CanvasNode,
   CollaboratorPresence,
   InteractionTool,
+  NodeTextTarget,
   TemplateId,
 } from '../types/canvas';
 import { CanvasNodeCard } from './CanvasNodeCard';
@@ -25,6 +26,7 @@ interface CanvasWorkspaceProps {
   onChangePanZoom: (pan: { x: number; y: number }, zoom: number) => void;
   onSelectNode: (nodeId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
+  onFocusTextTarget?: (nodeId: string, target: NodeTextTarget) => void;
   onMoveNode: (nodeId: string, x: number, y: number, commit?: boolean) => void;
   onUpdateNode: (nodeId: string, patch: Partial<CanvasNode>) => void;
   onSpawnChild: (parentId: string) => void;
@@ -51,6 +53,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
   onChangePanZoom,
   onSelectNode,
   onSelectEdge,
+  onFocusTextTarget,
   onMoveNode,
   onUpdateNode,
   onSpawnChild,
@@ -346,6 +349,25 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     return { x1: minX, x2: head.x, y };
   }, [templateId, visibleNodes]);
 
+  const svgBounds = useMemo(() => {
+    let minX = -1200;
+    let minY = -900;
+    let maxX = 1200;
+    let maxY = 900;
+    for (const n of visibleNodes) {
+      minX = Math.min(minX, n.x - 400);
+      minY = Math.min(minY, n.y - 400);
+      maxX = Math.max(maxX, n.x + n.width + 400);
+      maxY = Math.max(maxY, n.y + 600);
+    }
+    return {
+      minX,
+      minY,
+      width: Math.max(100, maxX - minX),
+      height: Math.max(100, maxY - minY),
+    };
+  }, [visibleNodes]);
+
   const gridSize = 28 * zoom;
   const dotColor = darkMode ? 'rgba(148, 163, 184, 0.2)' : 'rgba(100, 116, 139, 0.26)';
 
@@ -383,9 +405,15 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
       >
         {/* SVG Edges Layer */}
         <svg
-          className="overflow-visible pointer-events-none"
-          width="1"
-          height="1"
+          className="absolute pointer-events-none"
+          style={{
+            left: `${svgBounds.minX}px`,
+            top: `${svgBounds.minY}px`,
+            width: `${svgBounds.width}px`,
+            height: `${svgBounds.height}px`,
+            overflow: 'visible',
+          }}
+          viewBox={`${svgBounds.minX} ${svgBounds.minY} ${svgBounds.width} ${svgBounds.height}`}
         >
           {/* Fishbone central spine */}
           {fishboneSpine && (
@@ -559,6 +587,7 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
               childCount={childCounts.get(node.id) ?? 0}
               remoteSelectors={remoteSelectors}
               onSelect={(id) => onSelectNode(id)}
+              onFocusTextTarget={onFocusTextTarget}
               onStartDrag={handleStartNodeDrag}
               onUpdateNode={onUpdateNode}
               onSpawnChild={onSpawnChild}
