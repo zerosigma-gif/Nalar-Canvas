@@ -121,3 +121,25 @@ export async function decryptPayload<T>(
   const jsonText = textDecoder.decode(plainBuffer);
   return JSON.parse(jsonText) as T;
 }
+
+export async function deriveAccessVerifier(
+  roomId: string,
+  keyBase64Url: string
+): Promise<string> {
+  const material = textEncoder.encode(`nalarcanvas-room-access:${roomId}:${keyBase64Url}`);
+  const digest = await crypto.subtle.digest('SHA-256', material);
+  return bytesToBase64Url(new Uint8Array(digest));
+}
+
+export async function deriveAccessVerifierFromPassphrase(
+  passphrase: string,
+  roomId: string
+): Promise<{
+  key: CryptoKey;
+  keyBase64Url: string;
+  accessVerifier: string;
+}> {
+  const { key, keyBase64Url } = await deriveKeyFromPassphrase(passphrase, roomId);
+  const accessVerifier = await deriveAccessVerifier(roomId, keyBase64Url);
+  return { key, keyBase64Url, accessVerifier };
+}

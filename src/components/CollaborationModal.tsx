@@ -6,6 +6,11 @@ import {
   RoomLifetimeInfo,
   RoomLifetimeMinutes,
 } from '../types/canvas';
+import {
+  MAX_PROJECT_PASSWORD_LENGTH,
+  MIN_PROJECT_PASSWORD_LENGTH,
+  validateProjectPassword,
+} from '../utils/passwordPolicy';
 
 interface CollaborationModalProps {
   roomId: string;
@@ -69,6 +74,7 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
   const [nameInput, setNameInput] = useState(userName);
   const [colorInput, setColorInput] = useState(userColor);
   const [roomInput, setRoomInput] = useState(roomId);
+  const [roomSwitchError, setRoomSwitchError] = useState<string | null>(null);
   const [passphraseInput, setPassphraseInput] = useState('');
   const [showPassphrase, setShowPassphrase] = useState(false);
   const [passphraseBusy, setPassphraseBusy] = useState(false);
@@ -78,6 +84,8 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
   } | null>(null);
   const [copiedFull, setCopiedFull] = useState(false);
   const [copiedPasswordInvite, setCopiedPasswordInvite] = useState(false);
+
+  const policy = validateProjectPassword(passphraseInput);
 
   const shareUrl = (() => {
     const url = new URL(window.location.href);
@@ -124,24 +132,31 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateProfile(nameInput.trim() || 'Kolaborator', colorInput);
+    const cleaned = nameInput.replace(/[\x00-\x1F\x7F<>]/g, '').trim().slice(0, 40);
+    onUpdateProfile(cleaned || 'Kolaborator', colorInput);
   };
 
   const handleSwitchRoom = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleaned = roomInput.trim().replace(/[^a-zA-Z0-9-_]/g, '');
-    if (cleaned) {
-      onJoinRoom(cleaned);
+    const cleaned = roomInput.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}$/.test(cleaned)) {
+      setRoomSwitchError(
+        'ID ruang harus diawali huruf/angka dan panjang 3-64 karakter (huruf, angka, "-", "_").'
+      );
+      return;
     }
+    setRoomSwitchError(null);
+    onJoinRoom(cleaned);
   };
 
   const handleApplyPassphrase = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = passphraseInput.trim();
-    if (trimmed.length < 4) {
+    const check = validateProjectPassword(trimmed);
+    if (!check.valid) {
       setPassphraseFeedback({
         type: 'err',
-        text: 'Frasa kata sandi proyek minimal 4 karakter.',
+        text: check.errors[0] || 'Kata sandi belum memenuhi syarat keamanan.',
       });
       return;
     }
@@ -152,12 +167,12 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
       setPassphraseInput('');
       setPassphraseFeedback({
         type: 'ok',
-        text: 'Frasa kata sandi proyek diterapkan. Rekan tim memerlukan sandi ini untuk membuka ruang.',
+        text: 'Kata sandi kuat diterapkan. Server kini mewajibkan verifikasi sandi ini sebelum mengirim data ruang.',
       });
     } catch {
       setPassphraseFeedback({
         type: 'err',
-        text: 'Gagal menerapkan frasa kata sandi proyek.',
+        text: 'Gagal menerapkan kata sandi proyek.',
       });
     } finally {
       setPassphraseBusy(false);
@@ -255,7 +270,11 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
             <input
               type="text"
               value={roomInput}
-              onChange={(e) => setRoomInput(e.target.value)}
+              maxLength={64}
+              onChange={(e) => {
+                setRoomInput(e.target.value);
+                if (roomSwitchError) setRoomSwitchError(null);
+              }}
               placeholder="mis. sprint-produk-2026"
               className="flex-1 h-9 px-3 text-xs font-mono leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -267,6 +286,11 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
               <span>Gabung Ruang</span>
             </button>
           </div>
+          {roomSwitchError && (
+            <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
+              {roomSwitchError}
+            </p>
+          )}
         </form>
 
         {/* Room Session Lifetime Selector (30m, 1h, 2h, 24h) */}
@@ -356,8 +380,9 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
               <input
                 type={showPassphrase ? 'text' : 'password'}
                 value={passphraseInput}
+                maxLength={MAX_PROJECT_PASSWORD_LENGTH}
                 onChange={(e) => setPassphraseInput(e.target.value)}
-                placeholder="Atur frasa kata sandi proyek (min. 4 karakter)"
+                placeholder={`Minimal ${MIN_PROJECT_PASSWORD_LENGTH} karakter (huruf besar, kecil, angka)`}
                 className="w-full h-9 pl-8 pr-8 text-xs leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
@@ -371,13 +396,53 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
             </div>
             <button
               type="submit"
-              disabled={passphraseBusy}
-              className="h-9 px-3 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-60 transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+              disabled={passphraseBusy || !policy.valid}
+              className="h-9 px-3 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
             >
               <Lock className="w-3.5 h-3.5" />
               <span>{passphraseBusy ? 'Menyimpan...' : 'Terapkan Sandi'}</span>
             </button>
           </div>
+          {passphraseInput.length > 0 && (
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 text-[11px]">
+              <span
+                className={
+                  policy.checks.minLength
+                    ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                    : 'text-slate-500 dark:text-slate-400'
+                }
+              >
+                {policy.checks.minLength ? '✓' : '•'} Min. {MIN_PROJECT_PASSWORD_LENGTH} karakter
+              </span>
+              <span
+                className={
+                  policy.checks.hasUpper && policy.checks.hasLower
+                    ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                    : 'text-slate-500 dark:text-slate-400'
+                }
+              >
+                {policy.checks.hasUpper && policy.checks.hasLower ? '✓' : '•'} Huruf besar &amp; kecil
+              </span>
+              <span
+                className={
+                  policy.checks.hasNumber
+                    ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                    : 'text-slate-500 dark:text-slate-400'
+                }
+              >
+                {policy.checks.hasNumber ? '✓' : '•'} Mengandung angka
+              </span>
+              <span
+                className={
+                  policy.checks.notPredictable
+                    ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                    : 'text-red-600 dark:text-red-400 font-medium'
+                }
+              >
+                {policy.checks.notPredictable ? '✓' : '✕'} Bukan pola/tebakan umum
+              </span>
+            </div>
+          )}
           {passphraseFeedback && (
             <p
               className={`text-[11px] font-medium ${

@@ -34,7 +34,8 @@ import {
 } from './types/canvas';
 import {
   decryptPayload,
-  deriveKeyFromPassphrase,
+  deriveAccessVerifier,
+  deriveAccessVerifierFromPassphrase,
   encryptPayload,
   generateRoomKeyBase64,
   getKeyFingerprint,
@@ -139,7 +140,7 @@ export default function App() {
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // E2EE State
+  // E2EE & Server-Authoritative Auth State
   const [e2eeEnabled, setE2eeEnabled] = useState(true);
   const [roomKeyBase64, setRoomKeyBase64] = useState<string | null>(null);
   const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null);
@@ -149,9 +150,18 @@ export default function App() {
   const [isLockedNeedsPassphrase, setIsLockedNeedsPassphrase] = useState<boolean>(() =>
     isInvitePasswordMode()
   );
+  const [authReady, setAuthReady] = useState<boolean>(() => isInvitePasswordMode());
   const [decryptError, setDecryptError] = useState<string | null>(null);
+  const [cooldownLockedUntil, setCooldownLockedUntil] = useState<number>(0);
+  const [failedAuthAttempts, setFailedAuthAttempts] = useState<number>(0);
+  const [inviteRoomNotFound, setInviteRoomNotFound] = useState<boolean>(false);
+  const [inviteMetaFingerprint, setInviteMetaFingerprint] = useState<string | null>(null);
+  const [inviteMetaPeerCount, setInviteMetaPeerCount] = useState<number>(0);
   const isLockedRef = useRef(isLockedNeedsPassphrase);
   isLockedRef.current = isLockedNeedsPassphrase;
+  const accessVerifierRef = useRef<string | null>(null);
+  const passwordProtectedRef = useRef<boolean>(false);
+  const pendingJoinResolverRef = useRef<((ok: boolean) => void) | null>(null);
 
   // WebSocket Real-time State
   const [wsConnected, setWsConnected] = useState(false);
@@ -180,6 +190,10 @@ export default function App() {
   cryptoKeyRef.current = cryptoKey;
   const e2eeEnabledRef = useRef(e2eeEnabled);
   e2eeEnabledRef.current = e2eeEnabled;
+  const userNameRef = useRef(userName);
+  userNameRef.current = userName;
+  const userColorRef = useRef(userColor);
+  userColorRef.current = userColor;
 
   const showToast = useCallback((msg: string, durationMs = 2800) => {
     setToastMsg(msg);
@@ -207,7 +221,7 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Initialize E2EE Key from URL hash or generate fresh key (skip when invited via password gate)
+  // Initialize E2EE Key & Access Verifier from URL hash or generate fresh key
   useEffect(() => {
     let cancelled = false;
     async function initKey() {
@@ -216,11 +230,16 @@ export default function App() {
         try {
           const imported = await importRawRoomKey(existingHash);
           const fp = await getKeyFingerprint(imported);
+          const verifier = await deriveAccessVerifier(roomId, existingHash);
           if (!cancelled) {
             setRoomKeyBase64(existingHash);
             setCryptoKey(imported);
+            cryptoKeyRef.current = imported;
+            accessVerifierRef.current = verifier;
+            passwordProtectedRef.current = false;
             setKeyFingerprint(fp);
             setE2eeEnabled(true);
+            setAuthReady(true);
           }
           return;
         } catch {
@@ -228,24 +247,34 @@ export default function App() {
         }
       }
       if (isInvitePasswordMode()) {
-        // Wait for invited collaborator to enter the project password
+        if (!cancelled) {
+          accessVerifierRef.current = null;
+          setAuthReady(true);
+        }
         return;
       }
       const freshB64 = generateRoomKeyBase64();
       const imported = await importRawRoomKey(freshB64);
       const fp = await getKeyFingerprint(imported);
+      const verifier = await deriveAccessVerifier(roomId, freshB64);
       if (!cancelled) {
         setRoomKeyBase64(freshB64);
         setCryptoKey(imported);
+        cryptoKeyRef.current = imported;
+        accessVerifierRef.current = verifier;
+        passwordProtectedRef.current = false;
         setKeyFingerprint(fp);
         setHashKey(freshB64);
         setE2eeEnabled(true);
+        setAuthReady(true);
       }
     }
     initKey();
     return () => {
       cancelled = true;
     };
+    // Run once on initial boot; room switches explicitly manage keys & verifiers
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Broadcast board state (encrypted or plain) over WebSocket
@@ -310,8 +339,10 @@ export default function App() {
     []
   );
 
-  // Real WebSocket Connection Lifecycle with Auto-Reconnect
+  // Real WebSocket Connection Lifecycle with Server-First Auth & Auto-Reconnect
   useEffect(() => {
+    if (!authReady) return;
+
     let unmounted = false;
     let reconnectTimer: number | null = null;
     let pingTimer: number | null = null;
@@ -338,13 +369,18 @@ export default function App() {
         reconnectDelay = 1800;
         setWsConnected(true);
         if (ws.readyState === WebSocket.OPEN) {
+          const verifier = !isLockedRef.current ? accessVerifierRef.current : null;
           ws.send(
             JSON.stringify({
               type: 'room:join',
               roomId,
               clientId,
-              name: userName,
-              color: userColor,
+              name: userNameRef.current,
+              color: userColorRef.current,
+              accessVerifier: verifier,
+              isInvite: isLockedRef.current || isInvitePasswordMode(),
+              passwordProtected: passwordProtectedRef.current,
+              authAttempt: false,
             })
           );
         }
@@ -363,6 +399,9 @@ export default function App() {
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'room:init') {
+            setInviteRoomNotFound(false);
+            setCooldownLockedUntil(0);
+            setFailedAuthAttempts(0);
             if (Array.isArray(msg.peers)) {
               setPeers(msg.peers);
             }
@@ -376,11 +415,80 @@ export default function App() {
             } else if (!msg.encrypted && msg.plainBoard) {
               setE2eeEnabled(false);
               setIsLockedNeedsPassphrase(false);
+              setDecryptError(null);
               setBoard(msg.plainBoard);
-            } else if (!isLockedRef.current) {
-              // Empty fresh room: seed server with our initial board (only if not waiting at password login)
+            } else {
+              setIsLockedNeedsPassphrase(false);
+              setDecryptError(null);
               await transmitBoardSync(boardRef.current);
             }
+            if (pendingJoinResolverRef.current) {
+              const resolve = pendingJoinResolverRef.current;
+              pendingJoinResolverRef.current = null;
+              resolve(true);
+            }
+          } else if (msg.type === 'room:auth-required') {
+            setIsLockedNeedsPassphrase(true);
+            setInviteRoomNotFound(false);
+            setInviteMetaFingerprint(msg.keyFingerprint ?? null);
+            setInviteMetaPeerCount(Number(msg.peers) || 0);
+            if (msg.lifetime) {
+              setRoomLifetime(msg.lifetime);
+            }
+            if (msg.lockedUntil && Number(msg.lockedUntil) > Date.now()) {
+              setCooldownLockedUntil(Number(msg.lockedUntil));
+              setFailedAuthAttempts(Number(msg.attempts) || 0);
+            }
+            if (getHashKey()) {
+              setHashKey(null);
+            }
+            if (pendingJoinResolverRef.current) {
+              const resolve = pendingJoinResolverRef.current;
+              pendingJoinResolverRef.current = null;
+              resolve(false);
+            }
+          } else if (msg.type === 'room:auth-failed') {
+            setIsLockedNeedsPassphrase(true);
+            setInviteRoomNotFound(false);
+            setDecryptError(
+              msg.error || 'Kata sandi proyek tidak cocok. Periksa kembali kata sandi Anda.'
+            );
+            if (msg.lockedUntil) {
+              setCooldownLockedUntil(Number(msg.lockedUntil));
+            }
+            if (typeof msg.attempts === 'number') {
+              setFailedAuthAttempts(msg.attempts);
+            }
+            if (pendingJoinResolverRef.current) {
+              const resolve = pendingJoinResolverRef.current;
+              pendingJoinResolverRef.current = null;
+              resolve(false);
+            }
+          } else if (msg.type === 'room:not-found') {
+            setIsLockedNeedsPassphrase(true);
+            setInviteRoomNotFound(true);
+            setDecryptError(
+              msg.error || 'Room kolaborasi tidak ditemukan atau masa sesi telah berakhir.'
+            );
+            if (pendingJoinResolverRef.current) {
+              const resolve = pendingJoinResolverRef.current;
+              pendingJoinResolverRef.current = null;
+              resolve(false);
+            }
+          } else if (msg.type === 'room:error') {
+            if (msg.error) {
+              showToast(msg.error, 4000);
+            }
+            if (pendingJoinResolverRef.current) {
+              const resolve = pendingJoinResolverRef.current;
+              pendingJoinResolverRef.current = null;
+              resolve(false);
+            }
+          } else if (msg.type === 'room:access-updated') {
+            showToast(
+              `Pengaturan kata sandi akses diperbarui oleh ${msg.updatedBy || 'Pemilik Room'}.`,
+              3500
+            );
           } else if (msg.type === 'room:lifetime-updated') {
             if (msg.lifetime) {
               setRoomLifetime(msg.lifetime);
@@ -465,6 +573,11 @@ export default function App() {
         }
         if (unmounted) return;
         setWsConnected(false);
+        if (pendingJoinResolverRef.current) {
+          const resolve = pendingJoinResolverRef.current;
+          pendingJoinResolverRef.current = null;
+          resolve(false);
+        }
         if (closeEvent.code === 4001 || roomExpiredStopReconnectRef.current) {
           roomExpiredStopReconnectRef.current = true;
           setPeers([]);
@@ -497,7 +610,7 @@ export default function App() {
       }
       wsRef.current = null;
     };
-  }, [roomId, clientId, applyIncomingEnvelope, showToast, transmitBoardSync]);
+  }, [authReady, roomId, clientId, applyIncomingEnvelope, showToast, transmitBoardSync]);
 
   // Helper to commit board mutations with Undo/Redo & Real-time E2EE Sync
   const commitBoardChange = useCallback(
@@ -1258,7 +1371,7 @@ export default function App() {
     selectedNodeId,
   ]);
 
-  // E2EE Controls
+  // E2EE & Server Access Controls
   const handleToggleE2ee = async (enabled: boolean) => {
     setE2eeEnabled(enabled);
     e2eeEnabledRef.current = enabled;
@@ -1266,11 +1379,24 @@ export default function App() {
       const b64 = generateRoomKeyBase64();
       const k = await importRawRoomKey(b64);
       const fp = await getKeyFingerprint(k);
+      const verifier = await deriveAccessVerifier(roomId, b64);
       setRoomKeyBase64(b64);
       setCryptoKey(k);
       cryptoKeyRef.current = k;
+      accessVerifierRef.current = verifier;
+      passwordProtectedRef.current = false;
       setKeyFingerprint(fp);
       setHashKey(b64);
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: 'room:set-access',
+            accessVerifier: verifier,
+            passwordProtected: false,
+          })
+        );
+      }
     } else if (!enabled) {
       setHashKey(null);
     } else if (enabled && roomKeyBase64) {
@@ -1280,53 +1406,59 @@ export default function App() {
   };
 
   const handleSetPassphrase = async (passphrase: string) => {
-    const { key, keyBase64Url } = await deriveKeyFromPassphrase(passphrase, roomId);
+    const { key, keyBase64Url, accessVerifier } = await deriveAccessVerifierFromPassphrase(
+      passphrase,
+      roomId
+    );
     const fp = await getKeyFingerprint(key);
     setCryptoKey(key);
     cryptoKeyRef.current = key;
+    accessVerifierRef.current = accessVerifier;
+    passwordProtectedRef.current = true;
     setRoomKeyBase64(keyBase64Url);
     setKeyFingerprint(fp);
     setE2eeEnabled(true);
     e2eeEnabledRef.current = true;
     // Strip key from URL hash so passphrase stays secret
     setHashKey(null);
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: 'room:set-access',
+          accessVerifier,
+          passwordProtected: true,
+        })
+      );
+    }
     await transmitBoardSync(boardRef.current);
-    showToast('Frasa sandi E2EE diterapkan.');
+    showToast('Kata sandi kuat & verifikasi server diterapkan.');
   };
 
   const handleRotateRandomKey = async () => {
     const b64 = generateRoomKeyBase64();
     const k = await importRawRoomKey(b64);
     const fp = await getKeyFingerprint(k);
+    const verifier = await deriveAccessVerifier(roomId, b64);
     setCryptoKey(k);
     cryptoKeyRef.current = k;
+    accessVerifierRef.current = verifier;
+    passwordProtectedRef.current = false;
     setRoomKeyBase64(b64);
     setKeyFingerprint(fp);
     setHashKey(b64);
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: 'room:set-access',
+          accessVerifier: verifier,
+          passwordProtected: false,
+        })
+      );
+    }
     await transmitBoardSync(boardRef.current);
     showToast('Kunci enkripsi 256-bit baru dibuat.');
-  };
-
-  const handleUnlockWithPassphrase = async (passphrase: string): Promise<boolean> => {
-    if (!pendingEncryptedEnvelope) return true;
-    try {
-      const { key, keyBase64Url } = await deriveKeyFromPassphrase(passphrase, roomId);
-      const decrypted = await decryptPayload<BoardDocument>(key, pendingEncryptedEnvelope);
-      const fp = await getKeyFingerprint(key);
-      setCryptoKey(key);
-      cryptoKeyRef.current = key;
-      setRoomKeyBase64(keyBase64Url);
-      setKeyFingerprint(fp);
-      setBoard(decrypted);
-      setPendingEncryptedEnvelope(null);
-      setIsLockedNeedsPassphrase(false);
-      setDecryptError(null);
-      showToast('Kanvas berhasil didekripsi!');
-      return true;
-    } catch {
-      setDecryptError('Kata sandi proyek tidak cocok. Periksa kembali frasa sandi undangan Anda.');
-      return false;
-    }
   };
 
   const handleInviteLoginSubmit = async ({
@@ -1338,42 +1470,71 @@ export default function App() {
     color: string;
     passphrase: string;
   }): Promise<boolean> => {
-    setUserName(name);
-    setUserColor(color);
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'presence:update', name, color }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setDecryptError('Server belum terhubung. Tunggu sebentar lalu coba lagi.');
+      return false;
     }
 
-    if (pendingEncryptedEnvelope) {
-      const ok = await handleUnlockWithPassphrase(passphrase);
-      if (ok) {
-        const url = new URL(window.location.href);
-        url.searchParams.delete('invite');
-        window.history.replaceState(null, '', url.toString());
-      }
-      return ok;
-    }
+    setDecryptError(null);
+    setUserName(name);
+    userNameRef.current = name;
+    setUserColor(color);
+    userColorRef.current = color;
 
-    // Room had no encrypted data yet (fresh password-gated room)
-    const { key, keyBase64Url } = await deriveKeyFromPassphrase(passphrase, roomId);
+    const { key, keyBase64Url, accessVerifier } = await deriveAccessVerifierFromPassphrase(
+      passphrase,
+      roomId
+    );
     const fp = await getKeyFingerprint(key);
-    setCryptoKey(key);
+
+    // Hold candidate credentials until server verifies accessVerifier before sending room:init
     cryptoKeyRef.current = key;
+    setCryptoKey(key);
     setRoomKeyBase64(keyBase64Url);
     setKeyFingerprint(fp);
-    setE2eeEnabled(true);
-    e2eeEnabledRef.current = true;
-    setIsLockedNeedsPassphrase(false);
-    setDecryptError(null);
+    accessVerifierRef.current = accessVerifier;
+    passwordProtectedRef.current = true;
+
+    const verified = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        if (pendingJoinResolverRef.current === finish) {
+          pendingJoinResolverRef.current = null;
+        }
+        resolve(ok);
+      };
+      const timeoutId = window.setTimeout(() => finish(false), 10000);
+      pendingJoinResolverRef.current = finish;
+
+      ws.send(
+        JSON.stringify({
+          type: 'room:join',
+          roomId,
+          clientId,
+          name,
+          color,
+          accessVerifier,
+          isInvite: true,
+          authAttempt: true,
+        })
+      );
+    });
+
+    if (!verified) {
+      accessVerifierRef.current = null;
+      return false;
+    }
 
     const url = new URL(window.location.href);
     url.searchParams.delete('invite');
     url.hash = '';
     window.history.replaceState(null, '', url.toString());
 
-    await transmitBoardSync(boardRef.current);
-    showToast(`Selamat datang, ${name}! Ruang terenkripsi siap digunakan.`);
+    showToast(`Selamat datang, ${name}! Verifikasi server & dekripsi berhasil.`);
     return true;
   };
 
@@ -1382,6 +1543,7 @@ export default function App() {
     const freshB64 = generateRoomKeyBase64();
     const imported = await importRawRoomKey(freshB64);
     const fp = await getKeyFingerprint(imported);
+    const verifier = await deriveAccessVerifier(newRoomId, freshB64);
 
     roomExpiredStopReconnectRef.current = false;
     setExpiredRoomNotice(null);
@@ -1390,11 +1552,16 @@ export default function App() {
     setRoomKeyBase64(freshB64);
     setCryptoKey(imported);
     cryptoKeyRef.current = imported;
+    accessVerifierRef.current = verifier;
+    passwordProtectedRef.current = false;
     setKeyFingerprint(fp);
     setE2eeEnabled(true);
     e2eeEnabledRef.current = true;
     setPendingEncryptedEnvelope(null);
     setIsLockedNeedsPassphrase(false);
+    setInviteRoomNotFound(false);
+    setCooldownLockedUntil(0);
+    setFailedAuthAttempts(0);
     setDecryptError(null);
     if (keepCurrentCanvas) {
       setBoard((prev) => ({ ...prev, id: newRoomId, updatedAt: Date.now() }));
@@ -1432,7 +1599,9 @@ export default function App() {
   // Collaboration Profile / Room Switching
   const handleUpdateProfile = (name: string, color: string) => {
     setUserName(name);
+    userNameRef.current = name;
     setUserColor(color);
+    userColorRef.current = color;
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'presence:update', name, color }));
@@ -1440,21 +1609,66 @@ export default function App() {
     showToast('Profil kolaborator diperbarui.');
   };
 
-  const handleJoinRoom = (nextRoomId: string) => {
+  const handleJoinRoom = async (nextRoomId: string) => {
     roomExpiredStopReconnectRef.current = false;
     setExpiredRoomNotice(null);
     setSessionWarningBanner(null);
     setRoomLifetime(null);
-    const params = new URLSearchParams(window.location.search);
-    params.set('room', nextRoomId);
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}?${params.toString()}${window.location.hash}`
-    );
+    setInviteRoomNotFound(false);
+    setCooldownLockedUntil(0);
+    setFailedAuthAttempts(0);
+    setDecryptError(null);
+
+    let roomExists = false;
+    try {
+      const resp = await fetch(`/api/rooms/${encodeURIComponent(nextRoomId)}`);
+      if (resp.ok) {
+        const info = await resp.json();
+        roomExists = Boolean(info?.exists);
+      }
+    } catch {
+      // Fallback to direct WS verification
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', nextRoomId);
+
+    if (roomExists) {
+      // Existing room: require server verification via CollaboratorInviteLogin before room:init
+      accessVerifierRef.current = null;
+      setIsLockedNeedsPassphrase(true);
+      url.searchParams.set('invite', '1');
+      url.hash = '';
+      window.history.replaceState(null, '', url.toString());
+      setRoomId(nextRoomId);
+      setShowCollab(false);
+      showToast(`Ruang "${nextRoomId}" ditemukan. Verifikasi sandi diperlukan.`);
+      return;
+    }
+
+    // New room: generate fresh key + accessVerifier so server admits creator
+    const freshB64 = generateRoomKeyBase64();
+    const imported = await importRawRoomKey(freshB64);
+    const fp = await getKeyFingerprint(imported);
+    const verifier = await deriveAccessVerifier(nextRoomId, freshB64);
+
+    setRoomKeyBase64(freshB64);
+    setCryptoKey(imported);
+    cryptoKeyRef.current = imported;
+    accessVerifierRef.current = verifier;
+    passwordProtectedRef.current = false;
+    setKeyFingerprint(fp);
+    setE2eeEnabled(true);
+    e2eeEnabledRef.current = true;
+    setIsLockedNeedsPassphrase(false);
+    setBoard(buildFromScratchBoard(nextRoomId));
+
+    url.searchParams.delete('invite');
+    url.hash = `k=${freshB64}`;
+    window.history.replaceState(null, '', url.toString());
     setRoomId(nextRoomId);
     setShowCollab(false);
-    showToast(`Bergabung ke ruang: ${nextRoomId}`);
+    showToast(`Membuat ruang baru: ${nextRoomId}`);
   };
 
   const handleSetRoomLifetime = (minutes: RoomLifetimeMinutes) => {
@@ -1579,9 +1793,14 @@ export default function App() {
           initialName={userName}
           initialColor={userColor}
           wsConnected={wsConnected}
-          peerCount={Math.max(1, peers.length)}
-          envelopeFingerprint={pendingEncryptedEnvelope?.keyFingerprint ?? null}
+          peerCount={Math.max(inviteMetaPeerCount, peers.length)}
+          envelopeFingerprint={
+            pendingEncryptedEnvelope?.keyFingerprint ?? inviteMetaFingerprint
+          }
           decryptError={decryptError}
+          cooldownLockedUntil={cooldownLockedUntil}
+          failedAttempts={failedAuthAttempts}
+          roomNotFound={inviteRoomNotFound}
           darkMode={darkMode}
           onToggleTheme={() => setDarkMode((d) => !d)}
           onSubmitLogin={handleInviteLoginSubmit}
