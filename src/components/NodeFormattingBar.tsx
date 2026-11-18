@@ -210,10 +210,41 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
     });
   };
 
-  const handleInsertIntoTitle = (sym: string) => {
-    onUpdateNode(node.id, {
-      title: `${node.title} ${sym}`.trim(),
-    });
+  const handleClearSymbols = () => {
+    if (node.symbols.length > 0) {
+      onUpdateNode(node.id, { symbols: [] });
+    }
+  };
+
+  const handleInsertIntoText = (target: NodeTextTarget, sym: string) => {
+    const currentText = target === 'body' ? node.body || '' : node.title || '';
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      `[data-node-id="${node.id}"] textarea[data-text-target="${target}"]`
+    );
+
+    if (textarea) {
+      const start = textarea.selectionStart ?? currentText.length;
+      const end = textarea.selectionEnd ?? start;
+      const nextText = currentText.slice(0, start) + sym + currentText.slice(end);
+      onUpdateNode(node.id, target === 'body' ? { body: nextText } : { title: nextText });
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLTextAreaElement>(
+          `[data-node-id="${node.id}"] textarea[data-text-target="${target}"]`
+        );
+        if (el) {
+          const caret = start + sym.length;
+          el.setSelectionRange(caret, caret);
+        }
+      });
+      return;
+    }
+
+    const nextText = !currentText
+      ? sym
+      : /\s$/.test(currentText)
+      ? `${currentText}${sym}`
+      : `${currentText} ${sym}`;
+    onUpdateNode(node.id, target === 'body' ? { body: nextText } : { title: nextText });
   };
 
   const toggleDynamicTable = () => {
@@ -759,8 +790,10 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
           <div className="fixed top-[120px] left-1/2 -translate-x-1/2 z-40 max-w-[calc(100vw-24px)]">
             <SymbolPopover
               activeSymbols={node.symbols}
+              activeTextTarget={activeTextTarget}
               onToggleNodeSymbol={handleToggleSymbol}
-              onInsertIntoText={handleInsertIntoTitle}
+              onClearNodeSymbols={handleClearSymbols}
+              onInsertIntoText={handleInsertIntoText}
               onClose={() => setShowSymbolMenu(false)}
             />
           </div>

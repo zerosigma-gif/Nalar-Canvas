@@ -195,6 +195,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
             {editing ? (
               <textarea
                 ref={titleInputRef}
+                data-text-target="title"
                 rows={1}
                 value={node.title}
                 onFocus={() => onFocusTextTarget?.(node.id, 'title')}
@@ -274,6 +275,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
         {editing ? (
           <textarea
             ref={bodyInputRef}
+            data-text-target="body"
             value={node.body}
             rows={3}
             onFocus={() => onFocusTextTarget?.(node.id, 'body')}

@@ -20,6 +20,10 @@ export function estimateNodeHeight(node: CanvasNode): number {
 
   let h = 28 + titleLines * Math.ceil(titleSize * 1.38);
 
+  if (node.symbols.length > 0) {
+    h += 22;
+  }
+
   if (node.body && node.body.trim().length > 0) {
     const bStyle = resolveBodyStyle(node);
     const bodySize = Math.max(10, bStyle.fontSize || 13);
