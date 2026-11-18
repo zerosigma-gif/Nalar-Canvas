@@ -8,6 +8,7 @@ import {
   TemplateId,
 } from '../types/canvas';
 import { CanvasNodeCard } from './CanvasNodeCard';
+import { computeTimeframeGrid } from '../utils/timeframe';
 
 interface CanvasWorkspaceProps {
   nodes: CanvasNode[];
@@ -349,6 +350,11 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
     return { x1: minX, x2: head.x, y };
   }, [templateId, visibleNodes]);
 
+  const timeframeGrid = useMemo(() => {
+    if (templateId !== 'timeframe') return null;
+    return computeTimeframeGrid(visibleNodes);
+  }, [templateId, visibleNodes]);
+
   const svgBounds = useMemo(() => {
     let minX = -1200;
     let minY = -900;
@@ -360,13 +366,19 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
       maxX = Math.max(maxX, n.x + n.width + 400);
       maxY = Math.max(maxY, n.y + 600);
     }
+    if (timeframeGrid) {
+      minX = Math.min(minX, timeframeGrid.originX - 200);
+      minY = Math.min(minY, timeframeGrid.originY - 200);
+      maxX = Math.max(maxX, timeframeGrid.originX + timeframeGrid.totalWidth + 240);
+      maxY = Math.max(maxY, timeframeGrid.originY + timeframeGrid.totalHeight + 240);
+    }
     return {
       minX,
       minY,
       width: Math.max(100, maxX - minX),
       height: Math.max(100, maxY - minY),
     };
-  }, [visibleNodes]);
+  }, [timeframeGrid, visibleNodes]);
 
   const gridSize = 28 * zoom;
   const dotColor = darkMode ? 'rgba(148, 163, 184, 0.2)' : 'rgba(100, 116, 139, 0.26)';
@@ -415,6 +427,236 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
           }}
           viewBox={`${svgBounds.minX} ${svgBounds.minY} ${svgBounds.width} ${svgBounds.height}`}
         >
+          {/* Timeframe Imaginary Grid: Month Frame Dividers, Day Columns & Hour Rows */}
+          {timeframeGrid && (
+            <g className="pointer-events-none select-none">
+              {/* Outer matrix frame backdrop */}
+              <rect
+                x={timeframeGrid.originX}
+                y={timeframeGrid.originY}
+                width={timeframeGrid.totalWidth}
+                height={timeframeGrid.monthHeaderHeight + timeframeGrid.dayHeaderHeight + timeframeGrid.gridHeight}
+                rx={14}
+                fill={darkMode ? 'rgba(15, 23, 42, 0.55)' : 'rgba(255, 255, 255, 0.65)'}
+                stroke={darkMode ? '#1E293B' : '#CBD5E1'}
+                strokeWidth={1.5}
+              />
+
+              {/* Top-left corner Time Axis header */}
+              <rect
+                x={timeframeGrid.originX}
+                y={timeframeGrid.originY}
+                width={timeframeGrid.axisWidth}
+                height={timeframeGrid.monthHeaderHeight + timeframeGrid.dayHeaderHeight}
+                fill={darkMode ? 'rgba(30, 41, 59, 0.7)' : 'rgba(241, 245, 249, 0.9)'}
+              />
+              <text
+                x={timeframeGrid.originX + timeframeGrid.axisWidth / 2}
+                y={timeframeGrid.originY + (timeframeGrid.monthHeaderHeight + timeframeGrid.dayHeaderHeight) / 2 + 4}
+                textAnchor="middle"
+                fill={darkMode ? '#94A3B8' : '#475569'}
+                fontSize={11}
+                fontWeight={700}
+                fontFamily='"JetBrains Mono", monospace'
+              >
+                WAKTU
+              </text>
+
+              {/* Month Header Spans & Alternating Subtle Columns */}
+              {timeframeGrid.months.map((m, mIdx) => {
+                const isAlt = mIdx % 2 === 1;
+                const bannerFill = isAlt
+                  ? darkMode
+                    ? 'rgba(16, 185, 129, 0.14)'
+                    : 'rgba(236, 253, 245, 0.9)'
+                  : darkMode
+                  ? 'rgba(37, 99, 235, 0.16)'
+                  : 'rgba(239, 246, 255, 0.95)';
+                const bodyTint = isAlt
+                  ? darkMode
+                    ? 'rgba(16, 185, 129, 0.03)'
+                    : 'rgba(236, 253, 245, 0.28)'
+                  : darkMode
+                  ? 'rgba(37, 99, 235, 0.03)'
+                  : 'rgba(239, 246, 255, 0.25)';
+
+                return (
+                  <g key={m.key}>
+                    <rect
+                      x={m.startX}
+                      y={timeframeGrid.gridStartY}
+                      width={m.width}
+                      height={timeframeGrid.gridHeight}
+                      fill={bodyTint}
+                    />
+                    <rect
+                      x={m.startX}
+                      y={timeframeGrid.monthHeaderY}
+                      width={m.width}
+                      height={timeframeGrid.monthHeaderHeight}
+                      fill={bannerFill}
+                    />
+                    <text
+                      x={m.startX + m.width / 2}
+                      y={timeframeGrid.monthHeaderY + 24}
+                      textAnchor="middle"
+                      fill={isAlt ? (darkMode ? '#6EE7B7' : '#065F46') : darkMode ? '#93C5FD' : '#1E3A8A'}
+                      fontSize={13}
+                      fontWeight={700}
+                      fontFamily='"Plus Jakarta Sans", sans-serif'
+                    >
+                      {m.label.toUpperCase()}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Horizontal separator between Month header, Day header, and Grid body */}
+              <line
+                x1={timeframeGrid.gridStartX}
+                y1={timeframeGrid.dayHeaderY}
+                x2={timeframeGrid.originX + timeframeGrid.totalWidth}
+                y2={timeframeGrid.dayHeaderY}
+                stroke={darkMode ? '#334155' : '#CBD5E1'}
+                strokeWidth={1.2}
+              />
+              <line
+                x1={timeframeGrid.originX}
+                y1={timeframeGrid.gridStartY}
+                x2={timeframeGrid.originX + timeframeGrid.totalWidth}
+                y2={timeframeGrid.gridStartY}
+                stroke={darkMode ? '#334155' : '#94A3B8'}
+                strokeWidth={1.5}
+              />
+
+              {/* Day Columns: Header Labels & Imaginary Vertical Day Divider Lines */}
+              {timeframeGrid.days.map((col, idx) => (
+                <g key={col.key}>
+                  <rect
+                    x={col.x}
+                    y={timeframeGrid.dayHeaderY}
+                    width={col.width}
+                    height={timeframeGrid.dayHeaderHeight}
+                    fill={darkMode ? 'rgba(15, 23, 42, 0.45)' : 'rgba(248, 250, 252, 0.85)'}
+                  />
+                  <text
+                    x={col.x + col.width / 2}
+                    y={timeframeGrid.dayHeaderY + 26}
+                    textAnchor="middle"
+                    fill={darkMode ? '#E2E8F0' : '#0F172A'}
+                    fontSize={12}
+                    fontWeight={600}
+                    fontFamily='"Plus Jakarta Sans", sans-serif'
+                  >
+                    {col.shortLabel}
+                  </text>
+                  {idx > 0 && !col.isMonthStart && (
+                    <line
+                      x1={col.x}
+                      y1={timeframeGrid.dayHeaderY}
+                      x2={col.x}
+                      y2={timeframeGrid.gridStartY + timeframeGrid.gridHeight}
+                      stroke={darkMode ? 'rgba(148, 163, 184, 0.24)' : 'rgba(148, 163, 184, 0.45)'}
+                      strokeWidth={1}
+                      strokeDasharray={col.hasGapBefore ? '2 6' : '5 5'}
+                    />
+                  )}
+                </g>
+              ))}
+
+              {/* Hour Rows: Left Axis Time Labels & Imaginary Horizontal Time Grid Lines */}
+              {timeframeGrid.hours.map((row, rIdx) => (
+                <g key={row.hour}>
+                  {rIdx > 0 && (
+                    <line
+                      x1={timeframeGrid.originX}
+                      y1={row.y}
+                      x2={timeframeGrid.originX + timeframeGrid.totalWidth}
+                      y2={row.y}
+                      stroke={darkMode ? 'rgba(148, 163, 184, 0.22)' : 'rgba(148, 163, 184, 0.42)'}
+                      strokeWidth={1}
+                      strokeDasharray="6 5"
+                    />
+                  )}
+                  <text
+                    x={timeframeGrid.originX + timeframeGrid.axisWidth / 2}
+                    y={row.y + 26}
+                    textAnchor="middle"
+                    fill={darkMode ? '#94A3B8' : '#475569'}
+                    fontSize={11.5}
+                    fontWeight={600}
+                    fontFamily='"JetBrains Mono", monospace'
+                  >
+                    {row.label}
+                  </text>
+                </g>
+              ))}
+
+              {/* Left Axis Right Border */}
+              <line
+                x1={timeframeGrid.gridStartX}
+                y1={timeframeGrid.originY}
+                x2={timeframeGrid.gridStartX}
+                y2={timeframeGrid.gridStartY + timeframeGrid.gridHeight}
+                stroke={darkMode ? '#334155' : '#94A3B8'}
+                strokeWidth={1.5}
+              />
+
+              {/* Bold Vertical Month-Separator Frame Lines */}
+              {timeframeGrid.months.map((m, mIdx) => (
+                <g key={`sep-${m.key}`}>
+                  {mIdx > 0 && (
+                    <>
+                      <line
+                        x1={m.startX}
+                        y1={timeframeGrid.originY}
+                        x2={m.startX}
+                        y2={timeframeGrid.gridStartY + timeframeGrid.gridHeight}
+                        stroke={darkMode ? 'rgba(59, 130, 246, 0.25)' : 'rgba(37, 99, 235, 0.16)'}
+                        strokeWidth={8}
+                      />
+                      <line
+                        x1={m.startX}
+                        y1={timeframeGrid.originY}
+                        x2={m.startX}
+                        y2={timeframeGrid.gridStartY + timeframeGrid.gridHeight}
+                        stroke={darkMode ? '#60A5FA' : '#2563EB'}
+                        strokeWidth={2.5}
+                      />
+                    </>
+                  )}
+                </g>
+              ))}
+
+              {/* Optional Unscheduled Lane */}
+              {timeframeGrid.unscheduledLane && (
+                <g>
+                  <rect
+                    x={timeframeGrid.gridStartX}
+                    y={timeframeGrid.unscheduledLane.y}
+                    width={timeframeGrid.totalWidth - timeframeGrid.axisWidth}
+                    height={timeframeGrid.unscheduledLane.height}
+                    rx={12}
+                    fill={darkMode ? 'rgba(30, 41, 59, 0.35)' : 'rgba(241, 245, 249, 0.7)'}
+                    stroke={darkMode ? '#475569' : '#94A3B8'}
+                    strokeWidth={1.2}
+                    strokeDasharray="6 4"
+                  />
+                  <text
+                    x={timeframeGrid.gridStartX + 18}
+                    y={timeframeGrid.unscheduledLane.y + 24}
+                    fill={darkMode ? '#CBD5E1' : '#475569'}
+                    fontSize={11.5}
+                    fontWeight={600}
+                    fontFamily='"Plus Jakarta Sans", sans-serif'
+                  >
+                    {timeframeGrid.unscheduledLane.label}
+                  </text>
+                </g>
+              )}
+            </g>
+          )}
+
           {/* Fishbone central spine */}
           {fishboneSpine && (
             <line

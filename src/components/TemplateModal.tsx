@@ -89,6 +89,32 @@ const TemplateSchematic: React.FC<{ id: TemplateId }> = ({ id }) => {
       </svg>
     );
   }
+  if (id === 'timeframe') {
+    return (
+      <svg viewBox="0 0 180 90" className="w-full h-24">
+        {/* Month headers */}
+        <rect x="24" y="6" width="70" height="11" rx="2" fill="#EFF6FF" stroke="#93C5FD" strokeWidth="0.8" />
+        <rect x="94" y="6" width="76" height="11" rx="2" fill="#ECFDF5" stroke="#6EE7B7" strokeWidth="0.8" />
+        {/* Horizontal hour grid lines */}
+        <line x1="12" y1="32" x2="170" y2="32" stroke="#CBD5E1" strokeWidth="0.8" strokeDasharray="3 2" />
+        <line x1="12" y1="56" x2="170" y2="56" stroke="#CBD5E1" strokeWidth="0.8" strokeDasharray="3 2" />
+        <line x1="12" y1="78" x2="170" y2="78" stroke="#CBD5E1" strokeWidth="0.8" strokeDasharray="3 2" />
+        {/* Day columns */}
+        <line x1="59" y1="17" x2="59" y2="84" stroke="#E2E8F0" strokeWidth="1" />
+        <line x1="132" y1="17" x2="132" y2="84" stroke="#E2E8F0" strokeWidth="1" />
+        {/* Bold Vertical Month Separator Frame */}
+        <line x1="94" y1="6" x2="94" y2="86" stroke="#2563EB" strokeWidth="2.2" />
+        {/* Hour labels */}
+        <rect x="10" y="27" width="10" height="4" rx="1" fill="#94A3B8" />
+        <rect x="10" y="51" width="10" height="4" rx="1" fill="#94A3B8" />
+        {/* Cards positioned by Day x Hour */}
+        <rect x="29" y="24" width="26" height="14" rx="3" fill="#FFFFFF" stroke="#2563EB" strokeWidth="1.2" />
+        <rect x="64" y="47" width="26" height="14" rx="3" fill="#FFFBEB" stroke="#D97706" strokeWidth="1.2" />
+        <rect x="99" y="25" width="28" height="14" rx="3" fill="#ECFDF5" stroke="#059669" strokeWidth="1.2" />
+        <rect x="137" y="59" width="28" height="14" rx="3" fill="#EEF2FF" stroke="#7C3AED" strokeWidth="1.2" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 180 90" className="w-full h-24">
       <path d="M90 45 C65 45, 55 22, 34 22" fill="none" stroke="#059669" strokeWidth="1.8" />

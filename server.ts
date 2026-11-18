@@ -26,6 +26,7 @@ const TEMPLATE_IDS = new Set([
   'tree',
   'star-bursting',
   'lotus-blossom',
+  'timeframe',
 ]);
 
 const MAX_WS_PAYLOAD_BYTES = 15 * 1024 * 1024; // 15 MB transport ceiling

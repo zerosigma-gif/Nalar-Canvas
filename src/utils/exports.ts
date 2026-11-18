@@ -17,6 +17,11 @@ import PptxGenJS from 'pptxgenjs';
 import { BoardDocument, CanvasEdge, CanvasNode } from '../types/canvas';
 import { formatCellValue } from './tableFormat';
 import { resolveBodyStyle } from './templates';
+import {
+  computeTimeframeGrid,
+  groupTimeframeNodesChronologically,
+  TimeframeGrid,
+} from './timeframe';
 
 function sanitizeFileName(name: string): string {
   return (
@@ -175,6 +180,16 @@ export async function renderBoardToCanvas(
     maxY = Math.max(maxY, box.node.y + box.h);
   }
 
+  const timeframeGrid: TimeframeGrid | null =
+    doc.templateId === 'timeframe' ? computeTimeframeGrid(doc.nodes) : null;
+
+  if (timeframeGrid) {
+    minX = Math.min(minX, timeframeGrid.originX);
+    minY = Math.min(minY, timeframeGrid.originY);
+    maxX = Math.max(maxX, timeframeGrid.originX + timeframeGrid.totalWidth);
+    maxY = Math.max(maxY, timeframeGrid.originY + timeframeGrid.totalHeight);
+  }
+
   if (!Number.isFinite(minX)) {
     minX = -300;
     minY = -200;
@@ -236,6 +251,183 @@ export async function renderBoardToCanvas(
 
   // Translate to world coordinates
   ctx.translate(-minX + margin, -minY + margin + headerH);
+
+  // Draw Timeframe Imaginary Grid behind edges & nodes
+  if (timeframeGrid) {
+    ctx.save();
+    drawRoundedRect(
+      ctx,
+      timeframeGrid.originX,
+      timeframeGrid.originY,
+      timeframeGrid.totalWidth,
+      timeframeGrid.monthHeaderHeight + timeframeGrid.dayHeaderHeight + timeframeGrid.gridHeight,
+      14
+    );
+    ctx.fillStyle = darkMode ? 'rgba(15, 23, 42, 0.55)' : 'rgba(255, 255, 255, 0.72)';
+    ctx.fill();
+    ctx.strokeStyle = darkMode ? '#1E293B' : '#CBD5E1';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Corner WAKTU cell
+    ctx.fillStyle = darkMode ? 'rgba(30, 41, 59, 0.75)' : 'rgba(241, 245, 249, 0.92)';
+    ctx.fillRect(
+      timeframeGrid.originX,
+      timeframeGrid.originY,
+      timeframeGrid.axisWidth,
+      timeframeGrid.monthHeaderHeight + timeframeGrid.dayHeaderHeight
+    );
+    ctx.fillStyle = darkMode ? '#94A3B8' : '#475569';
+    ctx.font = '700 11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      'WAKTU',
+      timeframeGrid.originX + timeframeGrid.axisWidth / 2,
+      timeframeGrid.originY + (timeframeGrid.monthHeaderHeight + timeframeGrid.dayHeaderHeight) / 2 + 4
+    );
+
+    // Month header bands
+    timeframeGrid.months.forEach((m, mIdx) => {
+      const isAlt = mIdx % 2 === 1;
+      ctx.fillStyle = isAlt
+        ? darkMode
+          ? 'rgba(16, 185, 129, 0.04)'
+          : 'rgba(236, 253, 245, 0.3)'
+        : darkMode
+        ? 'rgba(37, 99, 235, 0.04)'
+        : 'rgba(239, 246, 255, 0.3)';
+      ctx.fillRect(m.startX, timeframeGrid.gridStartY, m.width, timeframeGrid.gridHeight);
+
+      ctx.fillStyle = isAlt
+        ? darkMode
+          ? 'rgba(16, 185, 129, 0.16)'
+          : 'rgba(236, 253, 245, 0.92)'
+        : darkMode
+        ? 'rgba(37, 99, 235, 0.18)'
+        : 'rgba(239, 246, 255, 0.95)';
+      ctx.fillRect(m.startX, timeframeGrid.monthHeaderY, m.width, timeframeGrid.monthHeaderHeight);
+
+      ctx.fillStyle = isAlt
+        ? darkMode
+          ? '#6EE7B7'
+          : '#065F46'
+        : darkMode
+        ? '#93C5FD'
+        : '#1E3A8A';
+      ctx.font = '700 13px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(m.label.toUpperCase(), m.startX + m.width / 2, timeframeGrid.monthHeaderY + 25);
+    });
+
+    // Day columns
+    timeframeGrid.days.forEach((col, idx) => {
+      ctx.fillStyle = darkMode ? 'rgba(15, 23, 42, 0.48)' : 'rgba(248, 250, 252, 0.88)';
+      ctx.fillRect(col.x, timeframeGrid.dayHeaderY, col.width, timeframeGrid.dayHeaderHeight);
+
+      ctx.fillStyle = darkMode ? '#E2E8F0' : '#0F172A';
+      ctx.font = '600 12px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(col.shortLabel, col.x + col.width / 2, timeframeGrid.dayHeaderY + 26);
+
+      if (idx > 0 && !col.isMonthStart) {
+        ctx.save();
+        ctx.setLineDash(col.hasGapBefore ? [2, 6] : [5, 5]);
+        ctx.strokeStyle = darkMode ? 'rgba(148, 163, 184, 0.25)' : 'rgba(148, 163, 184, 0.45)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(col.x, timeframeGrid.dayHeaderY);
+        ctx.lineTo(col.x, timeframeGrid.gridStartY + timeframeGrid.gridHeight);
+        ctx.stroke();
+        ctx.restore();
+      }
+    });
+
+    // Header horizontal dividers
+    ctx.strokeStyle = darkMode ? '#334155' : '#CBD5E1';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(timeframeGrid.gridStartX, timeframeGrid.dayHeaderY);
+    ctx.lineTo(timeframeGrid.originX + timeframeGrid.totalWidth, timeframeGrid.dayHeaderY);
+    ctx.stroke();
+
+    ctx.strokeStyle = darkMode ? '#334155' : '#94A3B8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(timeframeGrid.originX, timeframeGrid.gridStartY);
+    ctx.lineTo(timeframeGrid.originX + timeframeGrid.totalWidth, timeframeGrid.gridStartY);
+    ctx.stroke();
+
+    // Hour rows & horizontal time lines
+    timeframeGrid.hours.forEach((row, rIdx) => {
+      if (rIdx > 0) {
+        ctx.save();
+        ctx.setLineDash([6, 5]);
+        ctx.strokeStyle = darkMode ? 'rgba(148, 163, 184, 0.22)' : 'rgba(148, 163, 184, 0.42)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(timeframeGrid.originX, row.y);
+        ctx.lineTo(timeframeGrid.originX + timeframeGrid.totalWidth, row.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.fillStyle = darkMode ? '#94A3B8' : '#475569';
+      ctx.font = '600 11px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(row.label, timeframeGrid.originX + timeframeGrid.axisWidth / 2, row.y + 26);
+    });
+
+    // Axis vertical separator
+    ctx.strokeStyle = darkMode ? '#334155' : '#94A3B8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(timeframeGrid.gridStartX, timeframeGrid.originY);
+    ctx.lineTo(timeframeGrid.gridStartX, timeframeGrid.gridStartY + timeframeGrid.gridHeight);
+    ctx.stroke();
+
+    // Bold Vertical Month-Separator Frame Lines
+    timeframeGrid.months.forEach((m, mIdx) => {
+      if (mIdx > 0) {
+        ctx.strokeStyle = darkMode ? '#60A5FA' : '#2563EB';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(m.startX, timeframeGrid.originY);
+        ctx.lineTo(m.startX, timeframeGrid.gridStartY + timeframeGrid.gridHeight);
+        ctx.stroke();
+      }
+    });
+
+    // Unscheduled lane if needed
+    if (timeframeGrid.unscheduledLane) {
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      drawRoundedRect(
+        ctx,
+        timeframeGrid.gridStartX,
+        timeframeGrid.unscheduledLane.y,
+        timeframeGrid.totalWidth - timeframeGrid.axisWidth,
+        timeframeGrid.unscheduledLane.height,
+        12
+      );
+      ctx.fillStyle = darkMode ? 'rgba(30, 41, 59, 0.35)' : 'rgba(241, 245, 249, 0.72)';
+      ctx.fill();
+      ctx.strokeStyle = darkMode ? '#475569' : '#94A3B8';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = darkMode ? '#CBD5E1' : '#475569';
+      ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(
+        timeframeGrid.unscheduledLane.label,
+        timeframeGrid.gridStartX + 18,
+        timeframeGrid.unscheduledLane.y + 24
+      );
+    }
+
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
 
   // Draw Fishbone horizontal spine if fishbone template
   if (doc.templateId === 'fishbone') {
@@ -468,60 +660,125 @@ export async function exportAsPdf(doc: BoardDocument, darkMode: boolean): Promis
 
   pdf.addImage(imgData, 'PNG', 0, 0, canvas.width * 0.5, canvas.height * 0.5);
 
-  // Page 2: Structured Outline & Tables
+  // Page 2+: Structured Outline & Tables (chronological layout when templateId === 'timeframe')
   pdf.addPage('a4', 'portrait');
   let py = 48;
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(16);
-  pdf.text(doc.title, 40, py);
-  py += 20;
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(10);
-  pdf.text(`Template: ${doc.templateId} · Total Node: ${doc.nodes.length}`, 40, py);
-  py += 24;
-
-  for (const node of doc.nodes) {
-    if (py > 770) {
+  const ensurePdfSpace = (needed: number) => {
+    if (py + needed > 780) {
       pdf.addPage('a4', 'portrait');
       py = 48;
     }
+  };
+
+  const renderPdfNodeBlock = (node: CanvasNode, timePrefix?: string, indentX = 40) => {
+    ensurePdfSpace(42);
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(11);
+    pdf.setTextColor(15, 23, 42);
     const sym = node.symbols.length ? `${node.symbols.join(' ')} ` : '';
-    pdf.text(`${sym}${node.title}`, 40, py);
-    py += 15;
+    const heading = timePrefix ? `[${timePrefix}] ${sym}${node.title}` : `${sym}${node.title}`;
+    const wrappedTitle = pdf.splitTextToSize(heading, 555 - indentX);
+    pdf.text(wrappedTitle, indentX, py);
+    py += wrappedTitle.length * 14 + 2;
 
     if (node.body) {
       pdf.setFont('helvetica', 'normal');
       pdf.setFontSize(10);
-      const wrapped = pdf.splitTextToSize(node.body, 510);
-      pdf.text(wrapped, 48, py);
+      pdf.setTextColor(51, 65, 85);
+      const wrapped = pdf.splitTextToSize(node.body, 545 - indentX);
+      ensurePdfSpace(wrapped.length * 13 + 6);
+      pdf.text(wrapped, indentX + 8, py);
       py += wrapped.length * 13 + 4;
     }
     if (node.timestampStamp) {
-      pdf.setFontSize(9);
-      pdf.text(`Stamp: ${node.timestampStamp}`, 48, py);
+      ensurePdfSpace(14);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(`Stamp: ${node.timestampStamp}`, indentX + 8, py);
       py += 13;
     }
     if (node.table && node.table.columns.length > 0) {
+      ensurePdfSpace(26);
       pdf.setFont('helvetica', 'bold');
       pdf.setFontSize(9);
-      pdf.text(node.table.columns.map((c) => c.name).join(' | '), 48, py);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(node.table.columns.map((c) => c.name).join(' | '), indentX + 8, py);
       py += 12;
       pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(51, 65, 85);
       for (const row of node.table.rows) {
-        if (py > 780) {
-          pdf.addPage('a4', 'portrait');
-          py = 48;
-        }
+        ensurePdfSpace(14);
         const line = node.table.columns
           .map((c) => formatCellValue(c, row.cells[c.id]))
           .join(' | ');
-        pdf.text(line, 48, py);
+        pdf.text(line, indentX + 8, py);
         py += 12;
       }
     }
+    pdf.setTextColor(15, 23, 42);
     py += 8;
+  };
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(16);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text(doc.title, 40, py);
+  py += 18;
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(10);
+  pdf.setTextColor(100, 116, 139);
+  pdf.text(`Template: ${doc.templateId} · Total Node: ${doc.nodes.length}`, 40, py);
+  py += 24;
+
+  if (doc.templateId === 'timeframe') {
+    const report = groupTimeframeNodesChronologically(doc.nodes);
+    for (const month of report.months) {
+      ensurePdfSpace(52);
+      pdf.setFillColor(239, 246, 255);
+      pdf.setDrawColor(37, 99, 235);
+      pdf.rect(40, py - 13, 515, 22, 'FD');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(30, 58, 138);
+      pdf.text(month.monthLabel.toUpperCase(), 48, py + 2);
+      py += 20;
+
+      for (const day of month.days) {
+        ensurePdfSpace(34);
+        pdf.setDrawColor(203, 213, 225);
+        pdf.line(40, py + 4, 555, py + 4);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(10.5);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(day.dayLabel, 40, py);
+        py += 16;
+
+        for (const item of day.items) {
+          renderPdfNodeBlock(item.node, item.timeLabel, 50);
+        }
+      }
+      py += 6;
+    }
+
+    if (report.unscheduled.length > 0) {
+      ensurePdfSpace(40);
+      pdf.setFillColor(241, 245, 249);
+      pdf.setDrawColor(148, 163, 184);
+      pdf.rect(40, py - 13, 515, 22, 'FD');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(11);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text('BELUM TERJADWAL (TANPA STAMP WAKTU)', 48, py + 2);
+      py += 20;
+      for (const unNode of report.unscheduled) {
+        renderPdfNodeBlock(unNode, undefined, 48);
+      }
+    }
+  } else {
+    for (const node of doc.nodes) {
+      renderPdfNodeBlock(node);
+    }
   }
 
   pdf.save(`${sanitizeFileName(doc.title)}.pdf`);
@@ -840,7 +1097,53 @@ export async function exportAsPptx(doc: BoardDocument, darkMode: boolean): Promi
   await pptx.writeFile({ fileName: `${sanitizeFileName(doc.title)}.pptx` });
 }
 
-export function exportAsMarkdown(doc: BoardDocument): void {
+function formatMarkdownNodeDetails(node: CanvasNode, lines: string[]): void {
+  if (node.body) {
+    const bStyle = resolveBodyStyle(node);
+    const formattedBody = node.body
+      .split('\n')
+      .map((line) => {
+        if (!line.trim()) return line;
+        let out = line;
+        if (bStyle.bold) out = `**${out}**`;
+        if (bStyle.italic) out = `*${out}*`;
+        if (bStyle.underline) out = `<u>${out}</u>`;
+        return out;
+      })
+      .join('\n');
+    lines.push('');
+    lines.push(formattedBody);
+  }
+  if (node.timestampStamp) {
+    lines.push('');
+    lines.push(`> Stamp Waktu: \`${node.timestampStamp}\``);
+  }
+  if (node.media?.url) {
+    lines.push('');
+    lines.push(`![${node.media.caption || node.title}](${node.media.url})`);
+  }
+  if (node.table && node.table.columns.length > 0) {
+    lines.push('');
+    lines.push(`| ${node.table.columns.map((c) => c.name).join(' | ')} |`);
+    lines.push(`| ${node.table.columns.map(() => '---').join(' | ')} |`);
+    for (const row of node.table.rows) {
+      const vals = node.table.columns.map((c) => formatCellValue(c, row.cells[c.id]));
+      lines.push(`| ${vals.join(' | ')} |`);
+    }
+  }
+  lines.push('');
+}
+
+function formatMarkdownStyledTitle(node: CanvasNode): string {
+  const sym = node.symbols.length ? `${node.symbols.join(' ')} ` : '';
+  let formattedTitle = `${sym}${node.title}`;
+  if (node.style.bold) formattedTitle = `**${formattedTitle}**`;
+  if (node.style.italic) formattedTitle = `*${formattedTitle}*`;
+  if (node.style.underline) formattedTitle = `<u>${formattedTitle}</u>`;
+  return formattedTitle;
+}
+
+export function buildMarkdownContent(doc: BoardDocument): string {
   const lines: string[] = [];
   lines.push(`# ${doc.title}`);
   lines.push('');
@@ -848,6 +1151,59 @@ export function exportAsMarkdown(doc: BoardDocument): void {
   lines.push(`- **Total Node:** ${doc.nodes.length}`);
   lines.push(`- **Diekspor:** ${new Date().toLocaleString('id-ID')}`);
   lines.push('');
+
+  if (doc.templateId === 'timeframe') {
+    const report = groupTimeframeNodesChronologically(doc.nodes);
+
+    if (report.months.length > 0) {
+      lines.push('## Ringkasan Jadwal Linimasa');
+      lines.push('');
+      lines.push('| Bulan | Tanggal | Jam | Agenda | Ringkasan |');
+      lines.push('| --- | --- | --- | --- | --- |');
+      for (const month of report.months) {
+        for (const day of month.days) {
+          for (const item of day.items) {
+            const safeTitle = item.node.title.replace(/\|/g, '\\|').replace(/\n+/g, ' ');
+            const safeBody = (item.node.body || '-').replace(/\|/g, '\\|').replace(/\n+/g, ' ');
+            lines.push(
+              `| ${month.monthLabel} | ${day.dayLabel} | ${item.timeLabel} | ${safeTitle} | ${safeBody} |`
+            );
+          }
+        }
+      }
+      lines.push('');
+    }
+
+    for (const month of report.months) {
+      lines.push('---');
+      lines.push('');
+      lines.push(`## ${month.monthLabel}`);
+      lines.push('');
+
+      for (const day of month.days) {
+        lines.push(`### ${day.dayLabel}`);
+        lines.push('');
+
+        for (const item of day.items) {
+          lines.push(`#### \`${item.timeLabel}\` — ${formatMarkdownStyledTitle(item.node)}`);
+          formatMarkdownNodeDetails(item.node, lines);
+        }
+      }
+    }
+
+    if (report.unscheduled.length > 0) {
+      lines.push('---');
+      lines.push('');
+      lines.push('## Belum Terjadwal (Tanpa Stamp Waktu)');
+      lines.push('');
+      for (const unNode of report.unscheduled) {
+        lines.push(`### ${formatMarkdownStyledTitle(unNode)}`);
+        formatMarkdownNodeDetails(unNode, lines);
+      }
+    }
+
+    return lines.join('\n');
+  }
 
   const childrenMap = new Map<string | null, CanvasNode[]>();
   const nodeIds = new Set(doc.nodes.map((n) => n.id));
@@ -864,11 +1220,7 @@ export function exportAsMarkdown(doc: BoardDocument): void {
     visited.add(node.id);
 
     const headingPrefix = depth === 0 ? '##' : depth === 1 ? '###' : '####';
-    const sym = node.symbols.length ? `${node.symbols.join(' ')} ` : '';
-    let formattedTitle = `${sym}${node.title}`;
-    if (node.style.bold) formattedTitle = `**${formattedTitle}**`;
-    if (node.style.italic) formattedTitle = `*${formattedTitle}*`;
-    if (node.style.underline) formattedTitle = `<u>${formattedTitle}</u>`;
+    const formattedTitle = formatMarkdownStyledTitle(node);
 
     if (depth <= 2) {
       lines.push(`${headingPrefix} ${formattedTitle}`);
@@ -877,40 +1229,7 @@ export function exportAsMarkdown(doc: BoardDocument): void {
       lines.push(`${indent}- ${formattedTitle}`);
     }
 
-    if (node.body) {
-      const bStyle = resolveBodyStyle(node);
-      const formattedBody = node.body
-        .split('\n')
-        .map((line) => {
-          if (!line.trim()) return line;
-          let out = line;
-          if (bStyle.bold) out = `**${out}**`;
-          if (bStyle.italic) out = `*${out}*`;
-          if (bStyle.underline) out = `<u>${out}</u>`;
-          return out;
-        })
-        .join('\n');
-      lines.push('');
-      lines.push(formattedBody);
-    }
-    if (node.timestampStamp) {
-      lines.push('');
-      lines.push(`> Stamp Waktu: \`${node.timestampStamp}\``);
-    }
-    if (node.media?.url) {
-      lines.push('');
-      lines.push(`![${node.media.caption || node.title}](${node.media.url})`);
-    }
-    if (node.table && node.table.columns.length > 0) {
-      lines.push('');
-      lines.push(`| ${node.table.columns.map((c) => c.name).join(' | ')} |`);
-      lines.push(`| ${node.table.columns.map(() => '---').join(' | ')} |`);
-      for (const row of node.table.rows) {
-        const vals = node.table.columns.map((c) => formatCellValue(c, row.cells[c.id]));
-        lines.push(`| ${vals.join(' | ')} |`);
-      }
-    }
-    lines.push('');
+    formatMarkdownNodeDetails(node, lines);
 
     const kids = childrenMap.get(node.id) ?? [];
     for (const kid of kids) {
@@ -929,6 +1248,11 @@ export function exportAsMarkdown(doc: BoardDocument): void {
     }
   }
 
-  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  return lines.join('\n');
+}
+
+export function exportAsMarkdown(doc: BoardDocument): void {
+  const markdown = buildMarkdownContent(doc);
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
   triggerDownload(blob, `${sanitizeFileName(doc.title)}.md`);
 }

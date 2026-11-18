@@ -6,6 +6,10 @@ import {
   TemplateId,
 } from '../types/canvas';
 import { resolveBodyStyle } from './templates';
+import {
+  computeTimeframeGrid,
+  groupTimeframeNodesChronologically,
+} from './timeframe';
 
 export function estimateNodeHeight(node: CanvasNode): number {
   const width = Math.max(180, node.width || 248);
@@ -51,6 +55,7 @@ export function getConnectorStyleForTemplate(templateId: TemplateId): ConnectorS
       return 'orthogonal';
     case 'star-bursting':
     case 'lotus-blossom':
+    case 'timeframe':
       return 'straight';
     case 'mind-mapping':
     default:
@@ -588,6 +593,9 @@ export function organizeBoardByTemplate(
     case 'lotus-blossom':
       positions = layoutLotusBlossom(graph);
       break;
+    case 'timeframe':
+      positions = computeTimeframeGrid(doc.nodes).nodePositions;
+      break;
     case 'mind-mapping':
     default:
       positions = layoutMindMapping(graph);
@@ -645,6 +653,19 @@ export function buildPresentationOrder(
   }
 
   const visibleNodes = nodes.filter((n) => !hiddenIds.has(n.id));
+  if (templateId === 'timeframe') {
+    const report = groupTimeframeNodesChronologically(visibleNodes);
+    const chronological: CanvasNode[] = [];
+    for (const month of report.months) {
+      for (const day of month.days) {
+        for (const item of day.items) {
+          chronological.push(item.node);
+        }
+      }
+    }
+    return [...chronological, ...report.unscheduled];
+  }
+
   const graph = buildHierarchy(visibleNodes, edges, templateId);
   const visited = new Set<string>();
   const ordered: CanvasNode[] = [];

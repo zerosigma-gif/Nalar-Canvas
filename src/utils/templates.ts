@@ -8,6 +8,7 @@ import {
   StampFormat,
   TemplateId,
 } from '../types/canvas';
+import { computeTimeframeGrid } from './timeframe';
 
 export const DEFAULT_TEXT_STYLE: NodeTextStyle = {
   fontFamily: 'Plus Jakarta Sans',
@@ -203,6 +204,13 @@ export const TEMPLATE_CATALOG: TemplateMetadata[] = [
     name: 'Lotus Blossom Technique',
     subtitle: 'Ekspansi Matriks 8 Kelopak',
     description: 'Mengembangkan 1 gagasan pusat menjadi 8 tema kunci dan mekar menjadi gugus sub-ide terstruktur.',
+    connectorStyle: 'straight',
+  },
+  {
+    id: 'timeframe',
+    name: 'Timeframe Linimasa',
+    subtitle: 'Matriks Bulan, Hari & Jam Otomatis',
+    description: 'Menyusun node otomatis ke kolom tanggal dan baris jam dengan garis bingkai pemisah pergantian bulan.',
     connectorStyle: 'straight',
   },
 ];
@@ -546,6 +554,141 @@ export function buildTemplateBoard(templateId: TemplateId, existingId?: string):
       id: boardId,
       title: 'Lotus Blossom — Ekspansi 8 Kelopak',
       templateId: 'lotus-blossom',
+      nodes,
+      edges,
+      updatedAt: Date.now(),
+    };
+  }
+
+  if (templateId === 'timeframe') {
+    const now = new Date();
+    const endOfCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const yr = endOfCurrentMonth.getFullYear();
+    const mo = endOfCurrentMonth.getMonth();
+    const lastDay = endOfCurrentMonth.getDate();
+
+    const slot1 = new Date(yr, mo, Math.max(1, lastDay - 1), 9, 0);
+    const slot2 = new Date(yr, mo, lastDay, 11, 0);
+    const slot3 = new Date(yr, mo, lastDay, 14, 0);
+    const slot4 = new Date(yr, mo + 1, 1, 10, 0);
+    const slot5 = new Date(yr, mo + 1, 1, 13, 0);
+    const slot6 = new Date(yr, mo + 1, 2, 16, 0);
+
+    const rawNodes: CanvasNode[] = [
+      makeNode(
+        'tf-1',
+        0,
+        0,
+        'Kickoff & Audit Kebutuhan',
+        'Finalisasi ruang lingkup tim, dependensi API, serta pembagian peran sprint.',
+        {
+          width: 248,
+          surfaceColor: '#EFF6FF',
+          accentColor: '#2563EB',
+          symbols: ['◈'],
+          timestampStamp: formatStamp(slot1, 'full'),
+          style: { ...DEFAULT_TEXT_STYLE, bold: true, color: '#1E3A8A' },
+        }
+      ),
+      makeNode(
+        'tf-2',
+        0,
+        0,
+        'Review Desain & Kontrak Data',
+        'Validasi prototipe antarmuka dan skema tabel anggaran sebelum pergantian bulan.',
+        {
+          parentId: 'tf-1',
+          width: 248,
+          surfaceColor: '#ECFDF5',
+          accentColor: '#059669',
+          symbols: ['✓'],
+          timestampStamp: formatStamp(slot2, 'full'),
+          style: { ...DEFAULT_TEXT_STYLE, bold: true, color: '#065F46' },
+        }
+      ),
+      makeNode(
+        'tf-3',
+        0,
+        0,
+        'Pembekuan Ruang Lingkup Akhir Bulan',
+        'Sinkronisasi daftar deliverables lintas divisi tepat sebelum masuk bulan baru.',
+        {
+          parentId: 'tf-2',
+          width: 248,
+          surfaceColor: '#FFFBEB',
+          accentColor: '#D97706',
+          symbols: ['⚑'],
+          timestampStamp: formatStamp(slot3, 'full'),
+          style: { ...DEFAULT_TEXT_STYLE, bold: true, color: '#92400E' },
+        }
+      ),
+      makeNode(
+        'tf-4',
+        0,
+        0,
+        'Peluncuran Fase Bulan Baru',
+        'Aktivasi modul utama hari pertama dan pemantauan metrik kolaborator.',
+        {
+          parentId: 'tf-3',
+          width: 248,
+          surfaceColor: '#EEF2FF',
+          accentColor: '#7C3AED',
+          symbols: ['★'],
+          timestampStamp: formatStamp(slot4, 'full'),
+          style: { ...DEFAULT_TEXT_STYLE, bold: true, color: '#4C1D95' },
+        }
+      ),
+      makeNode(
+        'tf-5',
+        0,
+        0,
+        'Tracking Anggaran & Progres',
+        'Evaluasi realisasi target minggu pertama.',
+        {
+          parentId: 'tf-4',
+          width: 290,
+          surfaceColor: '#FFFFFF',
+          accentColor: '#0891B2',
+          timestampStamp: formatStamp(slot5, 'full'),
+          table: createDefaultTable(),
+        }
+      ),
+      makeNode(
+        'tf-6',
+        0,
+        0,
+        'Retrospektif & Laporan Ekspor',
+        'Rangkum hasil sesi ke PDF & Markdown kronologis untuk pemangku kepentingan.',
+        {
+          parentId: 'tf-5',
+          width: 248,
+          surfaceColor: '#FFF1F2',
+          accentColor: '#DC2626',
+          symbols: ['➜'],
+          timestampStamp: formatStamp(slot6, 'full'),
+          style: { ...DEFAULT_TEXT_STYLE, bold: true, color: '#881337' },
+        }
+      ),
+    ];
+
+    const grid = computeTimeframeGrid(rawNodes, slot1);
+    const nodes = rawNodes.map((n) => {
+      const pos = grid.nodePositions.get(n.id);
+      return pos ? { ...n, x: pos.x, y: pos.y } : n;
+    });
+
+    const edges: CanvasEdge[] = [
+      makeEdge('tf-1', 'tf-2', 'straight', '#2563EB'),
+      makeEdge('tf-2', 'tf-3', 'straight', '#059669'),
+      makeEdge('tf-3', 'tf-4', 'straight', '#D97706'),
+      makeEdge('tf-4', 'tf-5', 'straight', '#7C3AED'),
+      makeEdge('tf-5', 'tf-6', 'straight', '#0891B2'),
+    ];
+
+    return {
+      id: boardId,
+      title: 'Timeframe Linimasa — Peta Kronologis',
+      templateId: 'timeframe',
       nodes,
       edges,
       updatedAt: Date.now(),

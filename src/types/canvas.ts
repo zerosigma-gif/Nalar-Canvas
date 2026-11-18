@@ -112,7 +112,8 @@ export type TemplateId =
   | 'fishbone'
   | 'tree'
   | 'star-bursting'
-  | 'lotus-blossom';
+  | 'lotus-blossom'
+  | 'timeframe';
 
 export interface BoardDocument {
   id: string;

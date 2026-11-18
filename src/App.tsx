@@ -60,6 +60,7 @@ import {
   estimateNodeHeight,
   organizeBoardByTemplate,
 } from './utils/layout';
+import { computeTimeframeGrid } from './utils/timeframe';
 
 function getInitialRoomId(): string {
   const params = new URLSearchParams(window.location.search);
@@ -671,7 +672,7 @@ export default function App() {
   const getDefaultEdgeStyle = useCallback((tpl: TemplateId): ConnectorStyle => {
     if (tpl === 'fishbone') return 'fishbone';
     if (tpl === 'tree') return 'orthogonal';
-    if (tpl === 'star-bursting' || tpl === 'lotus-blossom') return 'straight';
+    if (tpl === 'star-bursting' || tpl === 'lotus-blossom' || tpl === 'timeframe') return 'straight';
     return 'bezier';
   }, []);
 
@@ -711,12 +712,14 @@ export default function App() {
         childX = parent.x - 290;
       }
 
+      const isTimeframe = boardRef.current.templateId === 'timeframe';
       const child = createBlankNode({
         parentId: parent.id,
         x: Math.round(childX),
         y: Math.round(childY),
         title: 'Sub-Ide',
         accentColor: parent.accentColor,
+        timestampStamp: isTimeframe ? parent.timestampStamp ?? null : null,
       });
 
       const edge: CanvasEdge = {
@@ -728,13 +731,18 @@ export default function App() {
       };
 
       commitBoardChange(
-        (prev) => ({
-          ...prev,
-          nodes: prev.nodes
-            .map((n) => (n.id === parent.id ? { ...n, collapsed: false } : n))
-            .concat(child),
-          edges: [...prev.edges, edge],
-        }),
+        (prev) => {
+          const next = {
+            ...prev,
+            nodes: prev.nodes
+              .map((n) => (n.id === parent.id ? { ...n, collapsed: false } : n))
+              .concat(child),
+            edges: [...prev.edges, edge],
+          };
+          return prev.templateId === 'timeframe'
+            ? organizeBoardByTemplate(next, 'timeframe')
+            : next;
+        },
         true,
         true
       );
@@ -775,10 +783,15 @@ export default function App() {
       accentColor: '#D97706',
       timestampStamp: formatStamp(new Date(), 'full'),
     });
-    commitBoardChange((prev) => ({
-      ...prev,
-      nodes: [...prev.nodes, node],
-    }));
+    commitBoardChange((prev) => {
+      const next = {
+        ...prev,
+        nodes: [...prev.nodes, node],
+      };
+      return prev.templateId === 'timeframe'
+        ? organizeBoardByTemplate(next, 'timeframe')
+        : next;
+    });
     setSelectedNodeId(node.id);
   }, [commitBoardChange, getViewportCenterWorld]);
 
@@ -808,12 +821,22 @@ export default function App() {
 
   const handleUpdateNode = useCallback(
     (nodeId: string, patch: Partial<CanvasNode>) => {
+      const isTimeframeAutoPlacement =
+        boardRef.current.templateId === 'timeframe' &&
+        (patch.timestampStamp !== undefined ||
+          patch.width !== undefined ||
+          patch.collapsed !== undefined);
       const shouldReorganize = patch.collapsed !== undefined;
       commitBoardChange(
-        (prev) => ({
-          ...prev,
-          nodes: prev.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)),
-        }),
+        (prev) => {
+          const updated = {
+            ...prev,
+            nodes: prev.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)),
+          };
+          return isTimeframeAutoPlacement
+            ? organizeBoardByTemplate(updated, 'timeframe')
+            : updated;
+        },
         true,
         shouldReorganize
       );
@@ -973,9 +996,14 @@ export default function App() {
   // Stamp Day & Time handler
   const handleInsertDateTimeStamp = useCallback(
     (formattedStamp: string) => {
+      const isTimeframe = boardRef.current.templateId === 'timeframe';
       if (selectedNodeId) {
         handleUpdateNode(selectedNodeId, { timestampStamp: formattedStamp });
-        showToast(`Stamp waktu disisipkan: ${formattedStamp}`);
+        showToast(
+          isTimeframe
+            ? `Node diposisikan otomatis ke slot waktu: ${formattedStamp}`
+            : `Stamp waktu disisipkan: ${formattedStamp}`
+        );
       } else {
         const center = getViewportCenterWorld();
         const node = createBlankNode({
@@ -988,12 +1016,21 @@ export default function App() {
           surfaceColor: '#EFF6FF',
           accentColor: '#2563EB',
         });
-        commitBoardChange((prev) => ({
-          ...prev,
-          nodes: [...prev.nodes, node],
-        }));
+        commitBoardChange((prev) => {
+          const next = {
+            ...prev,
+            nodes: [...prev.nodes, node],
+          };
+          return prev.templateId === 'timeframe'
+            ? organizeBoardByTemplate(next, 'timeframe')
+            : next;
+        });
         setSelectedNodeId(node.id);
-        showToast(`Node baru dibuat dengan stamp: ${formattedStamp}`);
+        showToast(
+          isTimeframe
+            ? `Node baru ditempatkan otomatis pada grid: ${formattedStamp}`
+            : `Node baru dibuat dengan stamp: ${formattedStamp}`
+        );
       }
     },
     [commitBoardChange, getViewportCenterWorld, handleUpdateNode, selectedNodeId, showToast]
@@ -1014,7 +1051,8 @@ export default function App() {
 
   const handleFitView = useCallback(() => {
     const nodes = boardRef.current.nodes;
-    if (nodes.length === 0) {
+    const isTimeframe = boardRef.current.templateId === 'timeframe';
+    if (nodes.length === 0 && !isTimeframe) {
       setPan({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
       setZoom(1);
       return;
@@ -1028,6 +1066,13 @@ export default function App() {
       minY = Math.min(minY, n.y);
       maxX = Math.max(maxX, n.x + n.width);
       maxY = Math.max(maxY, n.y + 180);
+    }
+    if (isTimeframe) {
+      const grid = computeTimeframeGrid(nodes);
+      minX = Math.min(minX, grid.originX);
+      minY = Math.min(minY, grid.originY);
+      maxX = Math.max(maxX, grid.originX + grid.totalWidth);
+      maxY = Math.max(maxY, grid.originY + grid.totalHeight);
     }
     const worldW = Math.max(300, maxX - minX + 180);
     const worldH = Math.max(250, maxY - minY + 200);
