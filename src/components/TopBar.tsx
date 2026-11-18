@@ -16,6 +16,7 @@ import {
   LayoutGrid,
   Users,
 } from 'lucide-react';
+import { TEMPLATE_CATALOG } from '../utils/templates';
 
 export type ExportFormat = 'png' | 'pdf' | 'docx' | 'pptx' | 'md';
 
@@ -100,7 +101,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   ];
 
   return (
-    <header className="fixed top-0 inset-x-0 h-14 z-40 px-3 sm:px-5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 md:gap-6">
+    <header className="fixed top-0 inset-x-0 h-14 z-40 px-3 sm:px-5 flex items-center justify-between gap-3 md:gap-6">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 -z-10 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 pointer-events-none"
+      />
       {/* Zone 1: Brand Wordmark + Project Title */}
       <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 md:flex-initial">
         <span className="text-sm sm:text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0">
@@ -188,20 +193,22 @@ export const TopBar: React.FC<TopBarProps> = ({
                 className="fixed inset-0 z-40"
                 onClick={() => setMobileMenuOpen(false)}
               />
-              <div className="fixed top-14 right-3 left-3 sm:left-auto sm:w-72 mt-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-2 z-50 space-y-1">
+              <div className="fixed top-14 right-3 left-3 sm:left-auto sm:w-72 mt-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-2 z-50 flex flex-col gap-1 max-h-[calc(100dvh-5rem)] overflow-y-auto">
                 <button
                   type="button"
                   onClick={() => {
                     setMobileMenuOpen(false);
                     onOpenTemplates();
                   }}
-                  className="w-full min-h-[44px] px-3 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
                 >
-                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
-                    <LayoutGrid className="w-4 h-4 text-blue-600" />
+                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100 leading-tight">
+                    <LayoutGrid className="w-4 h-4 text-blue-600 shrink-0" />
                     <span>Template Percabangan</span>
                   </span>
-                  <span className="text-[11px] text-slate-400">5 pola</span>
+                  <span className="inline-flex items-center justify-end text-right shrink-0 leading-tight text-[11px] text-slate-400">
+                    {TEMPLATE_CATALOG.length} pola
+                  </span>
                 </button>
 
                 <button
@@ -210,16 +217,27 @@ export const TopBar: React.FC<TopBarProps> = ({
                     setMobileMenuOpen(false);
                     onOpenCollaboration();
                   }}
-                  className="w-full min-h-[44px] px-3 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
                 >
-                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
-                    <Users className="w-4 h-4 text-indigo-600" />
+                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100 leading-tight whitespace-nowrap">
+                    <Users className="w-4 h-4 text-indigo-600 shrink-0" />
                     <span>Kolaborasi Real-Time</span>
                   </span>
-                  <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                    {wsConnected
-                      ? `${peerCount} aktif${remainingSessionText ? ` · ${remainingSessionText}` : ''}`
-                      : 'offline'}
+                  <span className="inline-flex flex-col items-end justify-center text-right leading-tight gap-0.5 shrink-0 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                    <span>{wsConnected ? `${peerCount} aktif` : 'offline'}</span>
+                    {wsConnected && remainingSessionText && (
+                      <span
+                        className={
+                          sessionUrgency === 'critical'
+                            ? 'text-[10px] text-red-600 dark:text-red-400 font-semibold'
+                            : sessionUrgency === 'warning'
+                            ? 'text-[10px] text-amber-600 dark:text-amber-400 font-semibold'
+                            : 'text-[10px] text-slate-400 dark:text-slate-500'
+                        }
+                      >
+                        {remainingSessionText}
+                      </span>
+                    )}
                   </span>
                 </button>
 
@@ -229,18 +247,18 @@ export const TopBar: React.FC<TopBarProps> = ({
                     setMobileMenuOpen(false);
                     onOpenEncryption();
                   }}
-                  className="w-full min-h-[44px] px-3 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
                 >
-                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100 leading-tight">
                     {e2eeEnabled ? (
-                      <Lock className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <Lock className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     ) : (
-                      <LockOpen className="w-4 h-4 text-amber-600" />
+                      <LockOpen className="w-4 h-4 text-amber-600 shrink-0" />
                     )}
                     <span>Keamanan E2EE</span>
                   </span>
                   <span
-                    className={`text-[11px] font-medium ${
+                    className={`inline-flex items-center justify-end text-right shrink-0 leading-tight text-[11px] font-medium ${
                       e2eeEnabled
                         ? 'text-emerald-600 dark:text-emerald-400'
                         : 'text-amber-600'
@@ -255,13 +273,13 @@ export const TopBar: React.FC<TopBarProps> = ({
                     setMobileMenuOpen(false);
                     onStartPresentation();
                   }}
-                  className="w-full min-h-[44px] px-3 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between gap-3"
                 >
-                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
-                    <Presentation className="w-4 h-4 text-blue-600" />
+                  <span className="inline-flex items-center gap-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100 leading-tight">
+                    <Presentation className="w-4 h-4 text-blue-600 shrink-0" />
                     <span>Mode Presentasi</span>
                   </span>
-                  <span className="text-[11px] text-slate-400">
+                  <span className="inline-flex items-center justify-end text-right shrink-0 leading-tight text-[11px] text-slate-400">
                     {canPresent ? 'Fokus berurutan' : 'Kosong'}
                   </span>
                 </button>

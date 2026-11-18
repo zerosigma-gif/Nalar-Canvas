@@ -16,6 +16,7 @@ interface CanvasMinimapProps {
 const MINIMAP_W = 212;
 const MINIMAP_H = 136;
 const TOP_BAR_H = 56;
+const getBottomBarH = (w: number) => (w < 768 ? 68 : 72);
 
 export const CanvasMinimap: React.FC<CanvasMinimapProps> = ({
   nodes,
@@ -31,7 +32,10 @@ export const CanvasMinimap: React.FC<CanvasMinimapProps> = ({
   );
   const [viewport, setViewport] = useState(() => ({
     w: typeof window !== 'undefined' ? window.innerWidth : 1440,
-    h: typeof window !== 'undefined' ? Math.max(200, window.innerHeight - TOP_BAR_H) : 840,
+    h:
+      typeof window !== 'undefined'
+        ? Math.max(200, window.innerHeight - TOP_BAR_H - getBottomBarH(window.innerWidth))
+        : 768,
   }));
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingRef = useRef(false);
@@ -40,7 +44,7 @@ export const CanvasMinimap: React.FC<CanvasMinimapProps> = ({
     const onResize = () => {
       setViewport({
         w: window.innerWidth,
-        h: Math.max(200, window.innerHeight - TOP_BAR_H),
+        h: Math.max(200, window.innerHeight - TOP_BAR_H - getBottomBarH(window.innerWidth)),
       });
     };
     window.addEventListener('resize', onResize);

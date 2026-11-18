@@ -662,7 +662,8 @@ export default function App() {
   // Node CRUD handlers
   const getViewportCenterWorld = useCallback(() => {
     const w = window.innerWidth;
-    const h = window.innerHeight;
+    const isMobile = w < 768;
+    const h = Math.max(200, window.innerHeight - 56 - (isMobile ? 68 : 72));
     return {
       x: Math.round((w / 2 - pan.x) / zoom - 124),
       y: Math.round((h / 2 - pan.y) / zoom - 48),
@@ -1052,8 +1053,10 @@ export default function App() {
   const handleFitView = useCallback(() => {
     const nodes = boardRef.current.nodes;
     const isTimeframe = boardRef.current.templateId === 'timeframe';
+    const isMobile = window.innerWidth < 768;
+    const canvasH = Math.max(200, window.innerHeight - 56 - (isMobile ? 68 : 72));
     if (nodes.length === 0 && !isTimeframe) {
-      setPan({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+      setPan({ x: window.innerWidth / 2, y: canvasH / 2 });
       setZoom(1);
       return;
     }
@@ -1075,17 +1078,16 @@ export default function App() {
       maxY = Math.max(maxY, grid.originY + grid.totalHeight);
     }
     const worldW = Math.max(300, maxX - minX + 180);
-    const worldH = Math.max(250, maxY - minY + 200);
-    const isMobile = window.innerWidth < 768;
+    const worldH = Math.max(250, maxY - minY + 140);
     const vw = window.innerWidth - (isMobile ? 32 : 120);
-    const vh = window.innerHeight - (isMobile ? 140 : 160);
-    const nextZoom = Math.min(1.2, Math.max(0.3, Math.min(vw / worldW, vh / worldH)));
+    const vh = Math.max(180, canvasH - (isMobile ? 28 : 48));
+    const nextZoom = Math.min(1.2, Math.max(0.25, Math.min(vw / worldW, vh / worldH)));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     setZoom(nextZoom);
     setPan({
       x: window.innerWidth / 2 - centerX * nextZoom,
-      y: window.innerHeight / 2 - centerY * nextZoom,
+      y: canvasH / 2 - centerY * nextZoom,
     });
   }, []);
 
@@ -1857,7 +1859,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-slate-100">
+    <div className="relative w-full h-[100dvh] flex flex-col overflow-hidden bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-slate-100">
       {!isPresenting && (
         <TopBar
           title={board.title}
@@ -1931,7 +1933,13 @@ export default function App() {
       )}
 
       {/* Infinite Floating Workspace Canvas */}
-      <main className={isPresenting ? 'w-full h-full' : 'w-full h-full pt-14'}>
+      <main
+        className={
+          isPresenting
+            ? 'relative flex-1 w-full min-h-0 overflow-hidden'
+            : 'relative flex-1 w-full min-h-0 overflow-hidden pt-14 pb-[68px] md:pb-[72px]'
+        }
+      >
         <CanvasWorkspace
           nodes={board.nodes}
           edges={board.edges}
