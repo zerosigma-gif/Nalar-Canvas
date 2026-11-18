@@ -533,7 +533,7 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
                 </span>
                 <input
                   type="color"
-                  value={activeStyle.color}
+                  value={activeStyle.color || '#0F172A'}
                   onChange={(e) => updateStyle({ color: e.target.value })}
                   className="w-6 h-5 cursor-pointer rounded border-0 bg-transparent"
                   title={`Pilih Warna Huruf ${targetLabel} Kustom`}
@@ -547,7 +547,7 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
                     onClick={() => updateStyle({ color: c })}
                     style={{ backgroundColor: c }}
                     className={`w-6 h-6 rounded-md border ${
-                      activeStyle.color === c
+                      (activeStyle.color || '#0F172A').toLowerCase() === c.toLowerCase()
                         ? 'ring-2 ring-blue-500 border-white'
                         : 'border-slate-300 dark:border-slate-700'
                     }`}
@@ -557,8 +557,17 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
             </div>
 
             <div>
-              <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-                Warna Latar Kartu
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                  Warna Latar Kartu
+                </span>
+                <input
+                  type="color"
+                  value={node.surfaceColor || '#FFFFFF'}
+                  onChange={(e) => onUpdateNode(node.id, { surfaceColor: e.target.value })}
+                  className="w-6 h-5 cursor-pointer rounded border-0 bg-transparent"
+                  title="Pilih Warna Latar Kartu Kustom"
+                />
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {NODE_SURFACE_COLORS.map((s) => (
@@ -569,7 +578,7 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
                     onClick={() => onUpdateNode(node.id, { surfaceColor: s.value })}
                     style={{ backgroundColor: s.value }}
                     className={`w-6 h-6 rounded-md border ${
-                      node.surfaceColor === s.value
+                      (node.surfaceColor || '#FFFFFF').toLowerCase() === s.value.toLowerCase()
                         ? 'ring-2 ring-blue-500 border-white'
                         : 'border-slate-300 dark:border-slate-700'
                     }`}
@@ -599,7 +608,7 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
                     onClick={() => onUpdateNode(node.id, { accentColor: c })}
                     style={{ backgroundColor: c }}
                     className={`w-6 h-6 rounded-md border ${
-                      node.accentColor === c
+                      (node.accentColor || '#2563EB').toLowerCase() === c.toLowerCase()
                         ? 'ring-2 ring-offset-1 ring-blue-500 border-white'
                         : 'border-transparent'
                     }`}

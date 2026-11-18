@@ -246,13 +246,7 @@ export const CanvasMinimap: React.FC<CanvasMinimapProps> = ({
               width={w}
               height={h}
               rx={1.5}
-              fill={
-                isSelected
-                  ? '#2563EB'
-                  : darkMode
-                  ? '#334155'
-                  : '#FFFFFF'
-              }
+              fill={isSelected ? '#2563EB' : n.surfaceColor || '#FFFFFF'}
               stroke={isSelected ? '#1D4ED8' : n.accentColor || '#64748B'}
               strokeWidth={isSelected ? 1.2 : 0.8}
             />

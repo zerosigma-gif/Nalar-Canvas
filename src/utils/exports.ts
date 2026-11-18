@@ -16,7 +16,7 @@ import { jsPDF } from 'jspdf';
 import PptxGenJS from 'pptxgenjs';
 import { BoardDocument, CanvasEdge, CanvasNode } from '../types/canvas';
 import { formatCellValue } from './tableFormat';
-import { resolveBodyStyle } from './templates';
+import { isDarkHexColor, resolveBodyStyle } from './templates';
 import {
   computeTimeframeGrid,
   groupTimeframeNodesChronologically,
@@ -498,15 +498,15 @@ export async function renderBoardToCanvas(
     ctx.shadowBlur = 14;
     ctx.shadowOffsetY = 4;
 
+    const cardBg = node.surfaceColor || '#FFFFFF';
     drawRoundedRect(ctx, x, y, w, h, 10);
-    ctx.fillStyle =
-      darkMode && node.surfaceColor === '#FFFFFF' ? '#131C31' : node.surfaceColor || '#FFFFFF';
+    ctx.fillStyle = cardBg;
     ctx.fill();
     ctx.restore();
 
     // Border
     drawRoundedRect(ctx, x, y, w, h, 10);
-    ctx.strokeStyle = node.accentColor || (darkMode ? '#334155' : '#CBD5E1');
+    ctx.strokeStyle = node.accentColor || '#CBD5E1';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
@@ -515,13 +515,9 @@ export async function renderBoardToCanvas(
     const bStyle = resolveBodyStyle(node);
     const bodyFontFamily = bStyle.fontFamily || 'Plus Jakarta Sans';
     const bodySize = Math.max(10, bStyle.fontSize || 13);
-    const isDarkCard = node.surfaceColor === '#1E293B' || (darkMode && node.surfaceColor === '#FFFFFF');
-    const textColor =
-      isDarkCard && node.style.color === '#0F172A' ? '#F8FAFC' : node.style.color || '#0F172A';
-    const bodyTextColor =
-      isDarkCard && (bStyle.color === '#475569' || bStyle.color === '#0F172A')
-        ? '#CBD5E1'
-        : bStyle.color || '#475569';
+    const isDarkCard = isDarkHexColor(cardBg);
+    const textColor = node.style.color || '#0F172A';
+    const bodyTextColor = bStyle.color || '#475569';
 
     let cursorY = y + 16;
 
@@ -579,9 +575,9 @@ export async function renderBoardToCanvas(
       if (imgEl) {
         ctx.drawImage(imgEl, x + 16, cursorY, mw, mh);
       } else {
-        ctx.fillStyle = darkMode ? '#1E293B' : '#E2E8F0';
+        ctx.fillStyle = isDarkCard ? '#1E293B' : '#E2E8F0';
         ctx.fillRect(x + 16, cursorY, mw, mh);
-        ctx.fillStyle = darkMode ? '#94A3B8' : '#64748B';
+        ctx.fillStyle = isDarkCard ? '#94A3B8' : '#64748B';
         ctx.font = '500 11px "Plus Jakarta Sans", sans-serif';
         ctx.fillText(node.media.caption || 'Media Visual Tersemat', x + 26, cursorY + 58);
       }
@@ -597,9 +593,9 @@ export async function renderBoardToCanvas(
       const colW = tw / cols.length;
 
       // Table Header
-      ctx.fillStyle = darkMode ? '#1E293B' : '#F1F5F9';
+      ctx.fillStyle = isDarkCard ? '#1E293B' : '#F1F5F9';
       ctx.fillRect(x + 16, cursorY, tw, 26);
-      ctx.strokeStyle = darkMode ? '#334155' : '#CBD5E1';
+      ctx.strokeStyle = isDarkCard ? '#334155' : '#CBD5E1';
       ctx.lineWidth = 1;
       ctx.strokeRect(x + 16, cursorY, tw, 26);
 
@@ -611,7 +607,7 @@ export async function renderBoardToCanvas(
       cursorY += 26;
 
       node.table.rows.forEach((row) => {
-        ctx.strokeStyle = darkMode ? '#334155' : '#E2E8F0';
+        ctx.strokeStyle = isDarkCard ? '#334155' : '#E2E8F0';
         ctx.strokeRect(x + 16, cursorY, tw, 24);
         ctx.fillStyle = isDarkCard ? '#CBD5E1' : '#334155';
         ctx.font = '400 10px "JetBrains Mono", monospace';
@@ -626,7 +622,7 @@ export async function renderBoardToCanvas(
     // Timestamp
     if (node.timestampStamp) {
       cursorY += 10;
-      ctx.fillStyle = darkMode ? '#94A3B8' : '#64748B';
+      ctx.fillStyle = isDarkCard ? '#94A3B8' : '#64748B';
       ctx.font = '500 10px "JetBrains Mono", monospace';
       ctx.fillText(`◷ ${node.timestampStamp}`, x + 16, cursorY + 10);
     }

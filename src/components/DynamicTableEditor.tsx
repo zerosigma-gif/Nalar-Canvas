@@ -92,9 +92,13 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
     });
   };
 
-  const borderClass = isDarkCard ? 'border-slate-700' : 'border-slate-200 dark:border-slate-700';
-  const headerBg = isDarkCard ? 'bg-slate-800/80 text-slate-200' : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200';
-  const cellText = isDarkCard ? 'text-slate-100' : 'text-slate-800 dark:text-slate-100';
+  const borderClass = isDarkCard ? 'border-slate-700' : 'border-slate-200';
+  const headerBg = isDarkCard ? 'bg-slate-800/80 text-slate-200' : 'bg-slate-50 text-slate-700';
+  const cellText = isDarkCard ? 'text-slate-100' : 'text-slate-800';
+  const hoverToolbarBtn = isDarkCard ? 'hover:bg-slate-700' : 'hover:bg-slate-200/70';
+  const formInputClass = isDarkCard
+    ? 'border-slate-600 bg-slate-900 text-slate-100'
+    : 'border-slate-300 bg-white text-slate-900';
 
   return (
     <div
@@ -110,7 +114,7 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
           <button
             type="button"
             onClick={() => setShowAddCol((v) => !v)}
-            className="inline-flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-200/70 dark:hover:bg-slate-700 transition-colors font-medium"
+            className={`inline-flex items-center gap-1 px-1.5 py-1 rounded ${hoverToolbarBtn} transition-colors font-medium`}
             title="Tambah Kolom Dinamis"
           >
             <Columns className="w-3 h-3" />
@@ -119,7 +123,7 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
           <button
             type="button"
             onClick={handleAddRow}
-            className="inline-flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-200/70 dark:hover:bg-slate-700 transition-colors font-medium"
+            className={`inline-flex items-center gap-1 px-1.5 py-1 rounded ${hoverToolbarBtn} transition-colors font-medium`}
             title="Tambah Baris"
           >
             <Rows className="w-3 h-3" />
@@ -128,7 +132,9 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
           <button
             type="button"
             onClick={onRemoveTable}
-            className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            className={`p-1 rounded text-slate-400 hover:text-red-600 transition-colors ${
+              isDarkCard ? 'hover:bg-red-950/40' : 'hover:bg-red-50'
+            }`}
             title="Hapus Tabel"
           >
             <Trash2 className="w-3 h-3" />
@@ -138,18 +144,22 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
 
       {/* Add Column Inline Form */}
       {showAddCol && (
-        <div className={`p-2 border-b ${borderClass} bg-blue-50/60 dark:bg-blue-950/30 flex flex-wrap items-center gap-1.5`}>
+        <div
+          className={`p-2 border-b ${borderClass} flex flex-wrap items-center gap-1.5 ${
+            isDarkCard ? 'bg-blue-950/30' : 'bg-blue-50/60'
+          }`}
+        >
           <input
             type="text"
             value={newColName}
             onChange={(e) => setNewColName(e.target.value)}
             placeholder="Nama kolom..."
-            className="flex-1 min-w-[90px] px-2 py-1 text-xs rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className={`flex-1 min-w-[90px] px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-blue-500 ${formInputClass}`}
           />
           <select
             value={newColFormat}
             onChange={(e) => setNewColFormat(e.target.value as ColumnFormat)}
-            className="px-2 py-1 text-xs rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className={`px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-blue-500 ${formInputClass}`}
           >
             {COLUMN_FORMAT_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -184,7 +194,9 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
                         type="text"
                         value={col.name}
                         onChange={(e) => handleUpdateColumn(col.id, { name: e.target.value })}
-                        className="w-full px-1.5 py-0.5 text-[11px] rounded border border-blue-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+                        className={`w-full px-1.5 py-0.5 text-[11px] rounded border border-blue-400 ${
+                          isDarkCard ? 'bg-slate-900 text-slate-100' : 'bg-white text-slate-900'
+                        }`}
                       />
                       <div className="flex items-center gap-1">
                         <select
@@ -192,7 +204,7 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
                           onChange={(e) =>
                             handleUpdateColumn(col.id, { format: e.target.value as ColumnFormat })
                           }
-                          className="flex-1 px-1 py-0.5 text-[10px] rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
+                          className={`flex-1 px-1 py-0.5 text-[10px] rounded border ${formInputClass}`}
                         >
                           {COLUMN_FORMAT_OPTIONS.map((opt) => (
                             <option key={opt.value} value={opt.value}>
@@ -226,7 +238,9 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
                       <button
                         type="button"
                         onClick={() => setEditingColId(col.id)}
-                        className="opacity-50 group-hover:opacity-100 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700"
+                        className={`opacity-50 group-hover:opacity-100 p-0.5 rounded ${
+                          isDarkCard ? 'hover:bg-slate-700' : 'hover:bg-slate-200'
+                        }`}
                         title="Atur Format & Nama Kolom"
                       >
                         <Settings2 className="w-3 h-3" />
@@ -252,7 +266,9 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
               table.rows.map((row) => (
                 <tr
                   key={row.id}
-                  className={`border-b last:border-b-0 ${borderClass} hover:bg-slate-50/70 dark:hover:bg-slate-800/40`}
+                  className={`border-b last:border-b-0 ${borderClass} ${
+                    isDarkCard ? 'hover:bg-slate-800/40' : 'hover:bg-slate-50/70'
+                  }`}
                 >
                   {table.columns.map((col) => {
                     const rawVal = row.cells[col.id];
@@ -282,18 +298,24 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
                             type="date"
                             value={String(rawVal ?? '')}
                             onChange={(e) => handleCellChange(row.id, col.id, e.target.value)}
-                            className="w-full bg-transparent text-[11px] tabular-nums focus:outline-none focus:bg-white/70 dark:focus:bg-slate-900 rounded px-1 py-0.5"
+                            className={`w-full bg-transparent text-[11px] tabular-nums focus:outline-none rounded px-1 py-0.5 ${
+                              isDarkCard ? 'focus:bg-slate-900' : 'focus:bg-white/80'
+                            }`}
                           />
                         ) : col.format === 'status' ? (
                           <select
                             value={String(rawVal ?? 'Rencana')}
                             onChange={(e) => handleCellChange(row.id, col.id, e.target.value)}
-                            className="w-full bg-transparent text-[11px] font-medium focus:outline-none focus:bg-white dark:focus:bg-slate-900 rounded px-1 py-0.5"
+                            className={`w-full bg-transparent text-[11px] font-medium focus:outline-none rounded px-1 py-0.5 ${
+                              isDarkCard
+                                ? 'focus:bg-slate-900 text-slate-100'
+                                : 'focus:bg-white text-slate-800'
+                            }`}
                           >
-                            <option value="Rencana">Rencana</option>
-                            <option value="Berjalan">Berjalan</option>
-                            <option value="Review">Review</option>
-                            <option value="Selesai">Selesai</option>
+                            <option value="Rencana" className="text-slate-900 bg-white">Rencana</option>
+                            <option value="Berjalan" className="text-slate-900 bg-white">Berjalan</option>
+                            <option value="Review" className="text-slate-900 bg-white">Review</option>
+                            <option value="Selesai" className="text-slate-900 bg-white">Selesai</option>
                           </select>
                         ) : (
                           <input
@@ -302,7 +324,11 @@ export const DynamicTableEditor: React.FC<DynamicTableEditorProps> = ({
                             onChange={(e) => handleCellChange(row.id, col.id, e.target.value)}
                             placeholder={col.format === 'currency' ? '0' : 'Isi...'}
                             title={isNumeric ? formatCellValue(col, rawVal) : undefined}
-                            className={`w-full bg-transparent text-[11px] focus:outline-none focus:bg-white/80 dark:focus:bg-slate-900 rounded px-1 py-0.5 ${
+                            className={`w-full bg-transparent text-[11px] focus:outline-none rounded px-1 py-0.5 ${
+                              isDarkCard
+                                ? 'focus:bg-slate-900 placeholder:text-slate-500'
+                                : 'focus:bg-white/80 placeholder:text-slate-400'
+                            } ${
                               isNumeric ? 'text-right font-mono tabular-nums' : 'text-left'
                             }`}
                           />

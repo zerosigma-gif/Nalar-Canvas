@@ -15,7 +15,7 @@ import {
   InteractionTool,
   NodeTextTarget,
 } from '../types/canvas';
-import { resolveBodyStyle } from '../utils/templates';
+import { isDarkHexColor, resolveBodyStyle } from '../utils/templates';
 import { DynamicTableEditor } from './DynamicTableEditor';
 
 interface CanvasNodeCardProps {
@@ -25,7 +25,6 @@ interface CanvasNodeCardProps {
   isPresenting?: boolean;
   tool: InteractionTool;
   zoom: number;
-  darkMode: boolean;
   childCount: number;
   remoteSelectors: CollaboratorPresence[];
   onSelect: (nodeId: string, multi?: boolean) => void;
@@ -43,7 +42,6 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
   isConnectSource,
   isPresenting = false,
   tool,
-  darkMode,
   childCount,
   remoteSelectors,
   onSelect,
@@ -87,19 +85,11 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
     el.style.height = `${el.scrollHeight}px`;
   }, [editing, node.title, node.style.fontSize, node.style.fontFamily, node.width]);
 
-  const isDarkCard =
-    node.surfaceColor === '#1E293B' || (darkMode && node.surfaceColor === '#FFFFFF');
-  const resolvedBg =
-    darkMode && node.surfaceColor === '#FFFFFF' ? '#131C31' : node.surfaceColor || '#FFFFFF';
-  const resolvedTextColor =
-    isDarkCard && node.style.color === '#0F172A'
-      ? '#F8FAFC'
-      : node.style.color || '#0F172A';
+  const resolvedBg = node.surfaceColor || '#FFFFFF';
+  const isDarkCard = isDarkHexColor(resolvedBg);
+  const resolvedTextColor = node.style.color || '#0F172A';
   const bodyStyle = resolveBodyStyle(node);
-  const resolvedBodyColor =
-    isDarkCard && (bodyStyle.color === '#475569' || bodyStyle.color === '#0F172A')
-      ? '#CBD5E1'
-      : bodyStyle.color || '#475569';
+  const resolvedBodyColor = bodyStyle.color || '#475569';
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (isPresenting) {
@@ -190,7 +180,11 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
                 {node.symbols.map((sym, idx) => (
                   <span
                     key={`${sym}-${idx}`}
-                    className="inline-flex items-center justify-center px-1 py-0.5 rounded bg-slate-100/80 dark:bg-slate-800/80 text-slate-800 dark:text-slate-100"
+                    className={`inline-flex items-center justify-center px-1 py-0.5 rounded ${
+                      isDarkCard
+                        ? 'bg-slate-800/80 text-slate-100'
+                        : 'bg-slate-100/80 text-slate-800'
+                    }`}
                   >
                     {sym}
                   </span>
@@ -225,7 +219,9 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
                   color: resolvedTextColor,
                   textAlign: node.style.align || 'left',
                 }}
-                className="w-full leading-snug break-words bg-white/80 dark:bg-slate-950/60 border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none resize-none overflow-hidden"
+                className={`w-full leading-snug break-words border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none resize-none overflow-hidden ${
+                  isDarkCard ? 'bg-slate-950/60' : 'bg-white/85'
+                }`}
               />
             ) : (
               <div
@@ -257,7 +253,11 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
                 }
                 setEditing((v) => !v);
               }}
-              className={`p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-opacity shrink-0 ${
+              className={`p-1 rounded-md text-slate-400 transition-opacity shrink-0 ${
+                isDarkCard
+                  ? 'hover:text-slate-200 hover:bg-slate-800'
+                  : 'hover:text-slate-700 hover:bg-slate-100'
+              } ${
                 isSelected || editing
                   ? 'opacity-100'
                   : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
@@ -292,7 +292,11 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
               color: resolvedBodyColor,
               textAlign: bodyStyle.align || 'left',
             }}
-            className="mt-2 w-full bg-white/80 dark:bg-slate-950/60 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y"
+            className={`mt-2 w-full border rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y ${
+              isDarkCard
+                ? 'bg-slate-950/60 border-slate-700 placeholder:text-slate-500'
+                : 'bg-white/85 border-slate-300 placeholder:text-slate-400'
+            }`}
           />
         ) : (
           node.body && (
@@ -324,7 +328,9 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
         {/* Attached Visual Media */}
         {node.media?.url && (
           <div
-            className="mt-2.5 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-950 cursor-pointer"
+            className={`mt-2.5 rounded-lg overflow-hidden border cursor-pointer ${
+              isDarkCard ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-slate-100'
+            }`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -348,7 +354,13 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
               />
             )}
             {node.media.caption && (
-              <div className="px-2.5 py-1 text-[11px] text-slate-600 dark:text-slate-300 bg-white/75 dark:bg-slate-900/75 border-t border-slate-200 dark:border-slate-800 truncate">
+              <div
+                className={`px-2.5 py-1 text-[11px] border-t truncate ${
+                  isDarkCard
+                    ? 'text-slate-300 bg-slate-900/85 border-slate-800'
+                    : 'text-slate-600 bg-white/85 border-slate-200'
+                }`}
+              >
                 {node.media.caption}
               </div>
             )}
@@ -369,9 +381,7 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
         {(node.timestampStamp || childCount > 0) && (
           <div
             className={`mt-2.5 pt-2 border-t flex items-center justify-between gap-2 text-[11px] ${
-              isDarkCard
-                ? 'border-slate-700/80 text-slate-400'
-                : 'border-slate-200/80 dark:border-slate-700/80 text-slate-500 dark:text-slate-400'
+              isDarkCard ? 'border-slate-700/80 text-slate-300' : 'border-slate-200/80 text-slate-500'
             }`}
           >
             <span className="font-mono tabular-nums truncate">
@@ -386,7 +396,9 @@ export const CanvasNodeCard: React.FC<CanvasNodeCardProps> = ({
                   e.stopPropagation();
                   onUpdateNode(node.id, { collapsed: !node.collapsed });
                 }}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-slate-200/60 dark:hover:bg-slate-700/60 font-medium tabular-nums shrink-0"
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium tabular-nums shrink-0 ${
+                  isDarkCard ? 'hover:bg-slate-700/60' : 'hover:bg-slate-200/60'
+                }`}
                 title={node.collapsed ? 'Bentangkan Cabang' : 'Lipat Cabang'}
               >
                 {node.collapsed ? (

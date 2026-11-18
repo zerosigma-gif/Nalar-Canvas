@@ -825,7 +825,6 @@ export const CanvasWorkspace: React.FC<CanvasWorkspaceProps> = ({
               isPresenting={isPresenting}
               tool={tool}
               zoom={zoom}
-              darkMode={darkMode}
               childCount={childCounts.get(node.id) ?? 0}
               remoteSelectors={remoteSelectors}
               onSelect={(id) => onSelectNode(id)}

@@ -47,6 +47,24 @@ export function resolveBodyStyle(node: CanvasNode): NodeTextStyle {
   };
 }
 
+export function isDarkHexColor(hex?: string | null): boolean {
+  if (!hex) return false;
+  const cleaned = hex.trim().replace('#', '');
+  const full =
+    cleaned.length === 3
+      ? cleaned
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : cleaned;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return false;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.5;
+}
+
 export const NODE_TEXT_COLORS = [
   '#0F172A',
   '#475569',
