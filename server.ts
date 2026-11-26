@@ -1,10 +1,12 @@
 import crypto from 'node:crypto';
+import net from 'node:net';
 import express from 'express';
 import type { Request } from 'express';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { trySanitizeBoardDocument } from './src/utils/boardSanitize.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,19 +19,18 @@ const CLIENT_ID_REGEX = /^[a-zA-Z0-9_-]{6,64}$/;
 const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;
 const SAFE_NAME_REGEX = /^[^\x00-\x1F\x7F<>]{1,40}$/;
 const VERIFIER_REGEX = /^[A-Za-z0-9_-]{32,128}$/;
+const OWNER_TOKEN_REGEX = /^[A-Za-z0-9_-]{16,128}$/;
 const FINGERPRINT_REGEX = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/;
 const BASE64URL_REGEX = /^[A-Za-z0-9_-]+$/;
 const NODE_ID_REGEX = /^[a-zA-Z0-9_-]{1,80}$/;
-const TEMPLATE_IDS = new Set([
-  'mind-mapping',
-  'fishbone',
-  'tree',
-  'star-bursting',
-  'lotus-blossom',
-  'timeframe',
-]);
 
-const MAX_WS_PAYLOAD_BYTES = 15 * 1024 * 1024; // 15 MB transport ceiling
+const MAX_WS_PAYLOAD_BYTES = 3 * 1024 * 1024; // 3 MB transport ceiling
+const MAX_ACTIVE_ROOMS = 500;
+const MAX_NEW_ROOMS_PER_MINUTE_PER_IP = 6;
+const MAX_RATE_MAP_ENTRIES = 5000;
+const EMPTY_ROOM_IDLE_TTL_MS = 15 * 60_000;
+const EMPTY_UNINIT_ROOM_IDLE_TTL_MS = 3 * 60_000;
+const MAX_ROOM_LIFETIME_CAP_MS = 24 * 60 * 60_000;
 
 function isPlainObject(val: unknown): val is Record<string, unknown> {
   return typeof val === 'object' && val !== null && !Array.isArray(val);
@@ -64,6 +65,12 @@ function validateAccessVerifier(val: unknown): string | null {
   if (typeof val !== 'string') return null;
   const trimmed = val.trim();
   return VERIFIER_REGEX.test(trimmed) ? trimmed : null;
+}
+
+function validateOwnerToken(val: unknown): string | null {
+  if (typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  return OWNER_TOKEN_REGEX.test(trimmed) ? trimmed : null;
 }
 
 function validateCursor(val: unknown): { x: number; y: number } | null | undefined {
@@ -116,14 +123,7 @@ function isValidEncryptedEnvelope(val: unknown): boolean {
 }
 
 function isValidPlainBoard(val: unknown): boolean {
-  if (!isPlainObject(val)) return false;
-  if (typeof val.id !== 'string' || !ROOM_ID_REGEX.test(val.id)) return false;
-  if (typeof val.title !== 'string' || val.title.length > 160) return false;
-  if (typeof val.templateId !== 'string' || !TEMPLATE_IDS.has(val.templateId)) return false;
-  if (!Array.isArray(val.nodes) || val.nodes.length > 2000) return false;
-  if (!Array.isArray(val.edges) || val.edges.length > 4000) return false;
-  if (typeof val.updatedAt !== 'number' || !Number.isFinite(val.updatedAt)) return false;
-  return true;
+  return trySanitizeBoardDocument(val) !== null;
 }
 
 // ============================================================================
@@ -166,8 +166,10 @@ interface GlobalAuthWindow {
 
 const httpRateMap = new Map<string, SlidingCounter>();
 const wsUpgradeRateMap = new Map<string, SlidingCounter>();
+const roomCreateRateMap = new Map<string, SlidingCounter>();
 const wsActiveConnectionsByIp = new Map<string, number>();
 const roomAuthCooldownMap = new Map<string, AuthFailureRecord>();
+const roomOnlyAuthCooldownMap = new Map<string, AuthFailureRecord>();
 const globalAuthWindowMap = new Map<string, GlobalAuthWindow>();
 
 const COOLDOWN_SCHEDULE_SEC = [3, 5, 15, 30, 60, 120];
@@ -176,17 +178,97 @@ const GLOBAL_AUTH_WINDOW_MS = 10 * 60_000;
 const GLOBAL_AUTH_MAX_FAILURES = 15;
 const GLOBAL_AUTH_BLOCK_SEC = 180;
 
+function boundedMapSet<K, V>(
+  map: Map<K, V>,
+  key: K,
+  value: V,
+  maxEntries = MAX_RATE_MAP_ENTRIES
+): void {
+  if (!map.has(key)) {
+    while (map.size >= maxEntries) {
+      const oldestKey = map.keys().next().value;
+      if (oldestKey === undefined) break;
+      map.delete(oldestKey);
+    }
+  }
+  map.set(key, value);
+}
+
+function normalizeCandidateIp(raw: string): string {
+  let ip = raw.trim();
+  if (!ip) return '';
+  if (ip.startsWith('[')) {
+    const endIdx = ip.indexOf(']');
+    if (endIdx > 1) {
+      ip = ip.slice(1, endIdx);
+    }
+  } else if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(ip)) {
+    ip = ip.slice(0, ip.lastIndexOf(':'));
+  }
+  const zoneIdx = ip.indexOf('%');
+  if (zoneIdx !== -1) {
+    ip = ip.slice(0, zoneIdx);
+  }
+  return ip;
+}
+
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return true;
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = nums;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 192 && b === 0 && nums[2] === 0) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a >= 224) return true;
+  return false;
+}
+
+function isPrivateOrReservedIp(rawIp: string): boolean {
+  const ip = normalizeCandidateIp(rawIp);
+  const ipVersion = net.isIP(ip);
+  if (ipVersion === 0) return true;
+  if (ipVersion === 4) {
+    return isPrivateIpv4(ip);
+  }
+  const lower = ip.toLowerCase();
+  if (lower === '::' || lower === '::1') return true;
+  if (lower.startsWith('::ffff:')) {
+    const v4Part = lower.slice(7);
+    if (net.isIP(v4Part) === 4) {
+      return isPrivateIpv4(v4Part);
+    }
+  }
+  if (/^(fc|fd|fe8|fe9|fea|feb)/i.test(lower)) return true;
+  return false;
+}
+
 function extractClientIp(req: http.IncomingMessage | Request): string {
   const xff = req.headers['x-forwarded-for'];
-  let ip = '';
-  if (typeof xff === 'string' && xff.trim()) {
-    ip = xff.split(',')[0].trim();
-  } else if (Array.isArray(xff) && xff.length > 0) {
-    ip = xff[0].trim();
-  } else {
-    ip = req.socket?.remoteAddress || 'unknown';
+  const rawHeader =
+    typeof xff === 'string'
+      ? xff
+      : Array.isArray(xff)
+      ? xff.join(',')
+      : '';
+
+  if (rawHeader.trim()) {
+    const candidates = rawHeader.split(',');
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const normalized = normalizeCandidateIp(candidates[i]);
+      if (net.isIP(normalized) !== 0 && !isPrivateOrReservedIp(normalized)) {
+        return normalized.slice(0, 64);
+      }
+    }
   }
-  return ip.slice(0, 64);
+
+  const remote = normalizeCandidateIp(req.socket?.remoteAddress || '');
+  return (remote || 'unknown').slice(0, 64);
 }
 
 function consumeFixedWindowRateLimit(
@@ -198,7 +280,7 @@ function consumeFixedWindowRateLimit(
   const now = Date.now();
   const entry = map.get(key);
   if (!entry || now >= entry.resetAt) {
-    map.set(key, { count: 1, resetAt: now + windowMs });
+    boundedMapSet(map, key, { count: 1, resetAt: now + windowMs });
     return { allowed: true, retryAfterSeconds: 0 };
   }
   if (entry.count >= maxRequests) {
@@ -218,13 +300,17 @@ function getAuthLockStatus(
   const now = Date.now();
   const roomKey = `${ip}::${roomId}`;
   const roomRec = roomAuthCooldownMap.get(roomKey);
+  const roomOnlyRec = roomOnlyAuthCooldownMap.get(roomId);
   const globalRec = globalAuthWindowMap.get(ip);
 
   let maxLockedUntil = 0;
-  let attempts = roomRec?.failures ?? 0;
+  const attempts = Math.max(roomRec?.failures ?? 0, roomOnlyRec?.failures ?? 0);
 
   if (roomRec && roomRec.lockedUntil > now) {
     maxLockedUntil = Math.max(maxLockedUntil, roomRec.lockedUntil);
+  }
+  if (roomOnlyRec && roomOnlyRec.lockedUntil > now) {
+    maxLockedUntil = Math.max(maxLockedUntil, roomOnlyRec.lockedUntil);
   }
   if (globalRec && globalRec.blockedUntil > now) {
     maxLockedUntil = Math.max(maxLockedUntil, globalRec.blockedUntil);
@@ -261,9 +347,28 @@ function recordAuthFailure(
   const cooldownSec = COOLDOWN_SCHEDULE_SEC[scheduleIdx];
   const roomLockedUntil = now + cooldownSec * 1000;
 
-  roomAuthCooldownMap.set(roomKey, {
+  boundedMapSet(roomAuthCooldownMap, roomKey, {
     failures: nextFailures,
     lockedUntil: roomLockedUntil,
+    lastAttemptAt: now,
+  });
+
+  // Per-roomId failure cooldown so protection remains consistent behind shared proxies
+  const prevRoomOnly = roomOnlyAuthCooldownMap.get(roomId);
+  const nextRoomOnlyFailures =
+    prevRoomOnly && now - prevRoomOnly.lastAttemptAt < AUTH_FAILURE_TTL_MS
+      ? prevRoomOnly.failures + 1
+      : 1;
+  const roomOnlyScheduleIdx = Math.min(
+    nextRoomOnlyFailures - 1,
+    COOLDOWN_SCHEDULE_SEC.length - 1
+  );
+  const roomOnlyCooldownSec = COOLDOWN_SCHEDULE_SEC[roomOnlyScheduleIdx];
+  const roomOnlyLockedUntil = now + roomOnlyCooldownSec * 1000;
+
+  boundedMapSet(roomOnlyAuthCooldownMap, roomId, {
+    failures: nextRoomOnlyFailures,
+    lockedUntil: roomOnlyLockedUntil,
     lastAttemptAt: now,
   });
 
@@ -289,19 +394,20 @@ function recordAuthFailure(
     gNext.blockedUntil = Math.max(gNext.blockedUntil, now + GLOBAL_AUTH_BLOCK_SEC * 1000);
     globalBlocked = true;
   }
-  globalAuthWindowMap.set(ip, gNext);
+  boundedMapSet(globalAuthWindowMap, ip, gNext);
 
-  const effectiveLockedUntil = Math.max(roomLockedUntil, gNext.blockedUntil);
+  const effectiveLockedUntil = Math.max(roomLockedUntil, roomOnlyLockedUntil, gNext.blockedUntil);
   return {
     retryAfterSeconds: Math.max(1, Math.ceil((effectiveLockedUntil - now) / 1000)),
     lockedUntil: effectiveLockedUntil,
-    attempts: nextFailures,
+    attempts: Math.max(nextFailures, nextRoomOnlyFailures),
     globalBlocked,
   };
 }
 
 function clearRoomAuthFailures(ip: string, roomId: string): void {
   roomAuthCooldownMap.delete(`${ip}::${roomId}`);
+  roomOnlyAuthCooldownMap.delete(roomId);
 }
 
 // ============================================================================
@@ -319,6 +425,7 @@ interface PeerPresence {
 interface RoomClient {
   ws: WebSocket;
   presence: PeerPresence;
+  isOwner: boolean;
 }
 
 type RoomLifetimeMinutes = 30 | 60 | 120 | 1440;
@@ -337,6 +444,7 @@ function parseLifetimeMinutes(val: unknown): RoomLifetimeMinutes | null {
 interface RoomState {
   roomId: string;
   accessVerifierHash: string;
+  ownerTokenHash: string | null;
   passwordProtected: boolean;
   encrypted: boolean;
   encryptedEnvelope: { keyFingerprint?: string } | Record<string, unknown> | null;
@@ -344,6 +452,7 @@ interface RoomState {
   clients: Map<string, RoomClient>;
   createdAt: number;
   updatedAt: number;
+  lastActivityAt: number;
   lifetimeMinutes: RoomLifetimeMinutes;
   expiresAt: number;
   warnedFiveMin: boolean;
@@ -352,6 +461,21 @@ interface RoomState {
 }
 
 const rooms = new Map<string, RoomState>();
+
+function resolveUniqueClientId(room: RoomState, requestedClientId: string): string {
+  if (!room.clients.has(requestedClientId)) {
+    return requestedClientId;
+  }
+  for (let i = 0; i < 8; i++) {
+    const suffix = `-${crypto.randomBytes(2).toString('hex')}`;
+    const candidate = `${requestedClientId.slice(0, 64 - suffix.length)}${suffix}`;
+    if (!room.clients.has(candidate)) {
+      return candidate;
+    }
+  }
+  const fallbackSuffix = `-${crypto.randomBytes(4).toString('hex')}`;
+  return `${requestedClientId.slice(0, 64 - fallbackSuffix.length)}${fallbackSuffix}`;
+}
 
 function sendJson(ws: WebSocket, payload: unknown): void {
   if (ws.readyState === WebSocket.OPEN) {
@@ -417,6 +541,7 @@ function expireAndDestroyRoom(room: RoomState): void {
 
   room.clients.clear();
   rooms.delete(room.roomId);
+  roomOnlyAuthCooldownMap.delete(room.roomId);
 }
 
 function scheduleRoomExpiration(room: RoomState): void {
@@ -447,6 +572,7 @@ function createNewRoom(
   roomId: string,
   accessVerifier: string,
   passwordProtected: boolean,
+  ownerToken: string | null,
   initialLifetimeMinutes?: RoomLifetimeMinutes
 ): RoomState {
   const now = Date.now();
@@ -454,6 +580,7 @@ function createNewRoom(
   const room: RoomState = {
     roomId,
     accessVerifierHash: hashVerifier(accessVerifier).toString('hex'),
+    ownerTokenHash: ownerToken ? hashVerifier(ownerToken).toString('hex') : null,
     passwordProtected,
     encrypted: true,
     encryptedEnvelope: null,
@@ -461,6 +588,7 @@ function createNewRoom(
     clients: new Map(),
     createdAt: now,
     updatedAt: now,
+    lastActivityAt: now,
     lifetimeMinutes,
     expiresAt: now + lifetimeMinutes * 60_000,
     warnedFiveMin: false,
@@ -472,7 +600,7 @@ function createNewRoom(
   return room;
 }
 
-// Periodic safety sweep for room expiry, low-time warnings & stale rate-limit GC
+// Periodic safety sweep for room expiry, idle cleanup, low-time warnings & stale rate-limit GC
 const lifecycleSweepTimer = setInterval(() => {
   const now = Date.now();
   for (const room of Array.from(rooms.values())) {
@@ -481,6 +609,18 @@ const lifecycleSweepTimer = setInterval(() => {
       expireAndDestroyRoom(room);
       continue;
     }
+
+    if (room.clients.size === 0) {
+      const hasCanvasContent = Boolean(room.encryptedEnvelope || room.plainBoard);
+      const idleLimit = hasCanvasContent
+        ? EMPTY_ROOM_IDLE_TTL_MS
+        : EMPTY_UNINIT_ROOM_IDLE_TTL_MS;
+      if (now - room.lastActivityAt >= idleLimit) {
+        expireAndDestroyRoom(room);
+        continue;
+      }
+    }
+
     if (room.clients.size > 0) {
       if (!room.warnedOneMin && remainingMs <= 60_000) {
         room.warnedOneMin = true;
@@ -509,9 +649,17 @@ const lifecycleSweepTimer = setInterval(() => {
   for (const [k, v] of wsUpgradeRateMap.entries()) {
     if (now >= v.resetAt) wsUpgradeRateMap.delete(k);
   }
+  for (const [k, v] of roomCreateRateMap.entries()) {
+    if (now >= v.resetAt) roomCreateRateMap.delete(k);
+  }
   for (const [k, v] of roomAuthCooldownMap.entries()) {
     if (now - v.lastAttemptAt >= AUTH_FAILURE_TTL_MS && now >= v.lockedUntil) {
       roomAuthCooldownMap.delete(k);
+    }
+  }
+  for (const [k, v] of roomOnlyAuthCooldownMap.entries()) {
+    if (now - v.lastAttemptAt >= AUTH_FAILURE_TTL_MS && now >= v.lockedUntil) {
+      roomOnlyAuthCooldownMap.delete(k);
     }
   }
   for (const [k, v] of globalAuthWindowMap.entries()) {
@@ -525,9 +673,77 @@ if (typeof lifecycleSweepTimer.unref === 'function') {
   lifecycleSweepTimer.unref();
 }
 
+function isAllowedWsOrigin(originHeader: string, request: http.IncomingMessage): boolean {
+  try {
+    const parsed = new URL(originHeader);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const originHost = parsed.hostname.toLowerCase();
+    const originHostWithPort = parsed.host.toLowerCase();
+
+    const hostHeaders = [
+      typeof request.headers.host === 'string' ? request.headers.host : '',
+      typeof request.headers['x-forwarded-host'] === 'string'
+        ? request.headers['x-forwarded-host'].split(',')[0]
+        : '',
+    ];
+    for (const rawHost of hostHeaders) {
+      const h = rawHost.trim().toLowerCase();
+      if (!h) continue;
+      const hostOnly = h.replace(/:\d+$/, '');
+      if (originHostWithPort === h || originHost === hostOnly) {
+        return true;
+      }
+    }
+
+    if (process.env.APP_URL) {
+      try {
+        const appUrl = new URL(process.env.APP_URL);
+        if (originHost === appUrl.hostname.toLowerCase()) {
+          return true;
+        }
+      } catch {
+        // Ignore malformed APP_URL env
+      }
+    }
+
+    if (
+      originHost === 'localhost' ||
+      originHost === '127.0.0.1' ||
+      originHost === '::1' ||
+      originHost === '[::1]'
+    ) {
+      return true;
+    }
+
+    const trustedSuffixes = [
+      'google.com',
+      'googleusercontent.com',
+      'usercontent.goog',
+      'run.app',
+    ];
+    for (const suffix of trustedSuffixes) {
+      if (originHost === suffix || originHost.endsWith(`.${suffix}`)) {
+        return true;
+      }
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '10mb' }));
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+  });
+  app.use(express.json({ limit: '3mb' }));
 
   // Per-IP HTTP rate limiting on /api/*
   app.use('/api', (req, res, next) => {
@@ -589,6 +805,15 @@ async function startServer() {
     try {
       const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
       if (url.pathname === '/ws') {
+        const originHeader = request.headers.origin;
+        if (typeof originHeader === 'string' && originHeader.trim() !== '') {
+          if (!isAllowedWsOrigin(originHeader, request)) {
+            socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+            socket.destroy();
+            return;
+          }
+        }
+
         const ip = extractClientIp(request);
         const upgradeRl = consumeFixedWindowRateLimit(wsUpgradeRateMap, ip, 35, 60_000);
         const activeCount = wsActiveConnectionsByIp.get(ip) ?? 0;
@@ -615,7 +840,11 @@ async function startServer() {
 
   wss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
     const clientIp = extractClientIp(request);
-    wsActiveConnectionsByIp.set(clientIp, (wsActiveConnectionsByIp.get(clientIp) ?? 0) + 1);
+    boundedMapSet(
+      wsActiveConnectionsByIp,
+      clientIp,
+      (wsActiveConnectionsByIp.get(clientIp) ?? 0) + 1
+    );
 
     let activeRoomId: string | null = null;
     let activeClientId: string | null = null;
@@ -643,6 +872,7 @@ async function startServer() {
 
       if (!prevRoom) return;
       prevRoom.clients.delete(leavingClientId);
+      prevRoom.lastActivityAt = Date.now();
       if (Date.now() >= prevRoom.expiresAt && prevRoom.clients.size === 0) {
         expireAndDestroyRoom(prevRoom);
       } else {
@@ -693,13 +923,14 @@ async function startServer() {
 
         if (type === 'room:join') {
           const roomId = validateRoomId(msg.roomId);
-          const clientId = validateClientId(msg.clientId);
+          const requestedClientId = validateClientId(msg.clientId);
           const name = validateDisplayName(msg.name);
           const color = validateHexColor(msg.color) ?? '#2563EB';
           const isInvite = msg.isInvite === true;
           const isAuthAttempt = msg.authAttempt === true;
+          const providedOwnerToken = validateOwnerToken(msg.ownerToken);
 
-          if (!roomId || !clientId || !name || !validateHexColor(msg.color ?? '#2563EB')) {
+          if (!roomId || !requestedClientId || !name || !validateHexColor(msg.color ?? '#2563EB')) {
             sendJson(ws, {
               type: 'room:error',
               code: 'INVALID_INPUT',
@@ -728,6 +959,31 @@ async function startServer() {
               return;
             }
 
+            if (rooms.size >= MAX_ACTIVE_ROOMS) {
+              sendJson(ws, {
+                type: 'room:error',
+                code: 'ROOM_QUOTA_EXCEEDED',
+                error:
+                  'Kapasitas ruang aktif di server telah mencapai batas. Coba lagi beberapa saat.',
+              });
+              return;
+            }
+
+            const createRl = consumeFixedWindowRateLimit(
+              roomCreateRateMap,
+              clientIp,
+              MAX_NEW_ROOMS_PER_MINUTE_PER_IP,
+              60_000
+            );
+            if (!createRl.allowed) {
+              sendJson(ws, {
+                type: 'room:error',
+                code: 'ROOM_CREATE_RATE_LIMIT',
+                error: `Terlalu sering membuat ruang baru. Tunggu ${createRl.retryAfterSeconds} detik.`,
+              });
+              return;
+            }
+
             const accessVerifier = validateAccessVerifier(msg.accessVerifier);
             if (!accessVerifier) {
               sendJson(ws, {
@@ -747,25 +1003,31 @@ async function startServer() {
               roomId,
               accessVerifier,
               msg.passwordProtected === true,
+              providedOwnerToken,
               requestedLifetime
             );
 
+            const assignedClientId = resolveUniqueClientId(room, requestedClientId);
+            const isOwner = Boolean(providedOwnerToken && room.ownerTokenHash);
             activeRoomId = roomId;
-            activeClientId = clientId;
+            activeClientId = assignedClientId;
 
             const presence: PeerPresence = {
-              clientId,
+              clientId: assignedClientId,
               name,
               color,
               cursor: null,
               selectedNodeId: null,
               lastSeen: now,
             };
-            room.clients.set(clientId, { ws, presence });
+            room.clients.set(assignedClientId, { ws, presence, isOwner });
+            room.lastActivityAt = now;
 
             sendJson(ws, {
               type: 'room:init',
               roomId,
+              clientId: assignedClientId,
+              isOwner,
               encrypted: room.encrypted,
               passwordProtected: room.passwordProtected,
               encryptedEnvelope: room.encryptedEnvelope,
@@ -780,7 +1042,7 @@ async function startServer() {
                 type: 'presence:list',
                 peers: getPresenceList(room),
               },
-              clientId
+              assignedClientId
             );
             return;
           }
@@ -867,22 +1129,32 @@ async function startServer() {
           clearRoomAuthFailures(clientIp, roomId);
           detachActiveClient();
 
+          const assignedClientId = resolveUniqueClientId(existing, requestedClientId);
+          const isOwner = Boolean(
+            providedOwnerToken &&
+              existing.ownerTokenHash &&
+              verifyAccessVerifier(providedOwnerToken, existing.ownerTokenHash)
+          );
+
           activeRoomId = roomId;
-          activeClientId = clientId;
+          activeClientId = assignedClientId;
 
           const presence: PeerPresence = {
-            clientId,
+            clientId: assignedClientId,
             name,
             color,
             cursor: null,
             selectedNodeId: null,
             lastSeen: now,
           };
-          existing.clients.set(clientId, { ws, presence });
+          existing.clients.set(assignedClientId, { ws, presence, isOwner });
+          existing.lastActivityAt = now;
 
           sendJson(ws, {
             type: 'room:init',
             roomId,
+            clientId: assignedClientId,
+            isOwner,
             encrypted: existing.encrypted,
             passwordProtected: existing.passwordProtected,
             encryptedEnvelope: existing.encryptedEnvelope,
@@ -897,7 +1169,7 @@ async function startServer() {
               type: 'presence:list',
               peers: getPresenceList(existing),
             },
-            clientId
+            assignedClientId
           );
           return;
         }
@@ -913,7 +1185,8 @@ async function startServer() {
         }
 
         const room = rooms.get(activeRoomId);
-        if (!room || !room.clients.has(activeClientId)) {
+        const activeClient = room?.clients.get(activeClientId);
+        if (!room || !activeClient) {
           sendJson(ws, {
             type: 'room:error',
             code: 'ROOM_UNAVAILABLE',
@@ -928,6 +1201,14 @@ async function startServer() {
         }
 
         if (type === 'room:set-access') {
+          if (!activeClient.isOwner) {
+            sendJson(ws, {
+              type: 'room:error',
+              code: 'FORBIDDEN',
+              error: 'Hanya pembuat ruang yang dapat mengubah kata sandi atau kunci akses ruang.',
+            });
+            return;
+          }
           const nextVerifier = validateAccessVerifier(msg.accessVerifier);
           if (!nextVerifier) {
             sendJson(ws, {
@@ -940,8 +1221,9 @@ async function startServer() {
           room.accessVerifierHash = hashVerifier(nextVerifier).toString('hex');
           room.passwordProtected = msg.passwordProtected === true;
           room.updatedAt = now;
+          room.lastActivityAt = now;
 
-          const updatedBy = room.clients.get(activeClientId)?.presence.name || 'Kolaborator';
+          const updatedBy = activeClient.presence.name || 'Pemilik Ruang';
           broadcastToRoom(room, {
             type: 'room:access-updated',
             passwordProtected: room.passwordProtected,
@@ -951,6 +1233,14 @@ async function startServer() {
         }
 
         if (type === 'room:set-lifetime') {
+          if (!activeClient.isOwner) {
+            sendJson(ws, {
+              type: 'room:error',
+              code: 'FORBIDDEN',
+              error: 'Hanya pembuat ruang yang dapat mengubah batas masa hidup ruang.',
+            });
+            return;
+          }
           const nextMinutes = parseLifetimeMinutes(msg.lifetimeMinutes);
           if (!nextMinutes) {
             sendJson(ws, {
@@ -960,14 +1250,26 @@ async function startServer() {
             });
             return;
           }
+          const maxCapExpiresAt = room.createdAt + MAX_ROOM_LIFETIME_CAP_MS;
+          const nextExpiresAt = Math.min(maxCapExpiresAt, now + nextMinutes * 60_000);
+          if (nextExpiresAt <= now) {
+            sendJson(ws, {
+              type: 'room:error',
+              code: 'LIFETIME_CAP_REACHED',
+              error: 'Batas maksimal durasi ruang (24 jam sejak dibuat) telah tercapai.',
+            });
+            return;
+          }
+
+          const remainingAfter = nextExpiresAt - now;
           room.lifetimeMinutes = nextMinutes;
-          room.createdAt = now;
-          room.expiresAt = now + nextMinutes * 60_000;
-          room.warnedFiveMin = false;
-          room.warnedOneMin = false;
+          room.expiresAt = nextExpiresAt;
+          room.warnedFiveMin = remainingAfter <= 5 * 60_000;
+          room.warnedOneMin = remainingAfter <= 60_000;
+          room.lastActivityAt = now;
           scheduleRoomExpiration(room);
 
-          const updatedBy = room.clients.get(activeClientId)?.presence.name || 'Kolaborator';
+          const updatedBy = activeClient.presence.name || 'Pemilik Ruang';
           broadcastToRoom(room, {
             type: 'room:lifetime-updated',
             lifetime: getLifetimePayload(room),
@@ -987,6 +1289,15 @@ async function startServer() {
           }
 
           const isEncrypted = msg.encrypted;
+          if (isEncrypted !== room.encrypted && !activeClient.isOwner) {
+            sendJson(ws, {
+              type: 'room:error',
+              code: 'FORBIDDEN',
+              error: 'Hanya pembuat ruang yang dapat mengubah mode enkripsi ruang.',
+            });
+            return;
+          }
+
           if (isEncrypted) {
             if (msg.encryptedEnvelope !== null && !isValidEncryptedEnvelope(msg.encryptedEnvelope)) {
               sendJson(ws, {
@@ -1001,20 +1312,25 @@ async function startServer() {
               (msg.encryptedEnvelope as Record<string, unknown> | null) ?? null;
             room.plainBoard = null;
           } else {
-            if (msg.plainBoard !== null && !isValidPlainBoard(msg.plainBoard)) {
-              sendJson(ws, {
-                type: 'room:error',
-                code: 'INVALID_BOARD',
-                error: 'Struktur dokumen kanvas tidak valid.',
-              });
-              return;
+            let sanitizedPlain: unknown | null = null;
+            if (msg.plainBoard !== null) {
+              sanitizedPlain = trySanitizeBoardDocument(msg.plainBoard, room.roomId);
+              if (!sanitizedPlain) {
+                sendJson(ws, {
+                  type: 'room:error',
+                  code: 'INVALID_BOARD',
+                  error: 'Struktur dokumen kanvas tidak valid.',
+                });
+                return;
+              }
             }
             room.encrypted = false;
-            room.plainBoard = msg.plainBoard ?? null;
+            room.plainBoard = sanitizedPlain;
             room.encryptedEnvelope = null;
           }
 
           room.updatedAt = now;
+          room.lastActivityAt = now;
           broadcastToRoom(
             room,
             {
@@ -1036,12 +1352,10 @@ async function startServer() {
           if (cursor === undefined || selectedNodeId === undefined) {
             return;
           }
-          const client = room.clients.get(activeClientId);
-          if (client) {
-            client.presence.cursor = cursor;
-            client.presence.selectedNodeId = selectedNodeId;
-            client.presence.lastSeen = now;
-          }
+          activeClient.presence.cursor = cursor;
+          activeClient.presence.selectedNodeId = selectedNodeId;
+          activeClient.presence.lastSeen = now;
+          room.lastActivityAt = now;
           broadcastToRoom(
             room,
             {
@@ -1056,34 +1370,32 @@ async function startServer() {
         }
 
         if (type === 'presence:update') {
-          const client = room.clients.get(activeClientId);
-          if (client) {
-            if (msg.name !== undefined) {
-              const validName = validateDisplayName(msg.name);
-              if (!validName) {
-                sendJson(ws, {
-                  type: 'room:error',
-                  code: 'INVALID_NAME',
-                  error: 'Nama kolaborator mengandung karakter tidak diizinkan.',
-                });
-                return;
-              }
-              client.presence.name = validName;
+          if (msg.name !== undefined) {
+            const validName = validateDisplayName(msg.name);
+            if (!validName) {
+              sendJson(ws, {
+                type: 'room:error',
+                code: 'INVALID_NAME',
+                error: 'Nama kolaborator mengandung karakter tidak diizinkan.',
+              });
+              return;
             }
-            if (msg.color !== undefined) {
-              const validColor = validateHexColor(msg.color);
-              if (!validColor) {
-                sendJson(ws, {
-                  type: 'room:error',
-                  code: 'INVALID_COLOR',
-                  error: 'Format warna kursor harus hex #RRGGBB.',
-                });
-                return;
-              }
-              client.presence.color = validColor;
-            }
-            client.presence.lastSeen = now;
+            activeClient.presence.name = validName;
           }
+          if (msg.color !== undefined) {
+            const validColor = validateHexColor(msg.color);
+            if (!validColor) {
+              sendJson(ws, {
+                type: 'room:error',
+                code: 'INVALID_COLOR',
+                error: 'Format warna kursor harus hex #RRGGBB.',
+              });
+              return;
+            }
+            activeClient.presence.color = validColor;
+          }
+          activeClient.presence.lastSeen = now;
+          room.lastActivityAt = now;
           broadcastToRoom(room, {
             type: 'presence:list',
             peers: getPresenceList(room),

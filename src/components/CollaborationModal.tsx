@@ -15,6 +15,7 @@ import {
 interface CollaborationModalProps {
   roomId: string;
   clientId: string;
+  isOwner: boolean;
   userName: string;
   userColor: string;
   wsConnected: boolean;
@@ -51,6 +52,7 @@ function formatCountdown(ms: number): string {
 export const CollaborationModal: React.FC<CollaborationModalProps> = ({
   roomId,
   clientId,
+  isOwner,
   userName,
   userColor,
   wsConnected,
@@ -77,6 +79,7 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
   const [roomSwitchError, setRoomSwitchError] = useState<string | null>(null);
   const [passphraseInput, setPassphraseInput] = useState('');
   const [showPassphrase, setShowPassphrase] = useState(false);
+  const [showInviteKey, setShowInviteKey] = useState(false);
   const [passphraseBusy, setPassphraseBusy] = useState(false);
   const [passphraseFeedback, setPassphraseFeedback] = useState<{
     type: 'ok' | 'err';
@@ -100,6 +103,13 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
       url.hash = '';
     }
     return url.toString();
+  })();
+
+  const hasInviteHashKey = shareUrl.includes('#k=');
+  const displayedShareUrl = (() => {
+    if (showInviteKey || !hasInviteHashKey) return shareUrl;
+    const hashIdx = shareUrl.indexOf('#k=');
+    return `${shareUrl.slice(0, hashIdx)}#k=••••••••`;
   })();
 
   const passwordLoginInviteUrl = (() => {
@@ -151,6 +161,7 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
 
   const handleApplyPassphrase = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOwner) return;
     const trimmed = passphraseInput.trim();
     const check = validateProjectPassword(trimmed);
     if (!check.valid) {
@@ -222,12 +233,27 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
             Tautan Undangan Ruang
           </label>
           <div className="flex items-center gap-2">
-            <input
-              type="text"
-              readOnly
-              value={shareUrl}
-              className="flex-1 h-9 px-3 text-xs font-mono leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300"
-            />
+            <div className="relative flex-1 min-w-0">
+              <input
+                type="text"
+                readOnly
+                value={displayedShareUrl}
+                className={`w-full h-9 pl-3 ${
+                  hasInviteHashKey ? 'pr-9' : 'pr-3'
+                } text-xs font-mono leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300`}
+              />
+              {hasInviteHashKey && (
+                <button
+                  type="button"
+                  onClick={() => setShowInviteKey((v) => !v)}
+                  aria-label={showInviteKey ? 'Sembunyikan Kunci Tautan' : 'Lihat Kunci Tautan'}
+                  title={showInviteKey ? 'Sembunyikan kunci tautan' : 'Tampilkan kunci tautan'}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                >
+                  {showInviteKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              )}
+            </div>
             <button
               type="button"
               onClick={handleCopyInvite}
@@ -322,19 +348,25 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
                 <button
                   key={opt.value}
                   type="button"
-                  disabled={!wsConnected}
+                  disabled={!wsConnected || !isOwner}
                   onClick={() => onSetLifetime(opt.value)}
                   className={`h-9 px-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
                     isSelected
                       ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
                       : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  } disabled:opacity-50`}
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   {opt.label}
                 </button>
               );
             })}
           </div>
+
+          {!isOwner && (
+            <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+              Hanya pembuat ruang yang dapat mengubah masa hidup atau sandi akses ruang.
+            </p>
+          )}
 
           <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
             {roomLifetime ? (
@@ -380,23 +412,29 @@ export const CollaborationModal: React.FC<CollaborationModalProps> = ({
               <input
                 type={showPassphrase ? 'text' : 'password'}
                 value={passphraseInput}
+                disabled={!isOwner}
                 maxLength={MAX_PROJECT_PASSWORD_LENGTH}
                 onChange={(e) => setPassphraseInput(e.target.value)}
-                placeholder={`Minimal ${MIN_PROJECT_PASSWORD_LENGTH} karakter (huruf besar, kecil, angka)`}
-                className="w-full h-9 pl-8 pr-8 text-xs leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder={
+                  isOwner
+                    ? `Minimal ${MIN_PROJECT_PASSWORD_LENGTH} karakter (huruf besar, kecil, angka)`
+                    : 'Hanya pembuat ruang yang dapat mengatur sandi'
+                }
+                className="w-full h-9 pl-8 pr-8 text-xs leading-normal rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
               />
               <button
                 type="button"
+                disabled={!isOwner}
                 onClick={() => setShowPassphrase((v) => !v)}
                 aria-label={showPassphrase ? 'Sembunyikan Sandi' : 'Lihat Sandi'}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-50"
               >
                 {showPassphrase ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               </button>
             </div>
             <button
               type="submit"
-              disabled={passphraseBusy || !policy.valid}
+              disabled={!isOwner || passphraseBusy || !policy.valid}
               className="h-9 px-3 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
             >
               <Lock className="w-3.5 h-3.5" />

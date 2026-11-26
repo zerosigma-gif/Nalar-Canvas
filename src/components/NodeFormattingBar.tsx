@@ -218,9 +218,12 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
 
   const handleInsertIntoText = (target: NodeTextTarget, sym: string) => {
     const currentText = target === 'body' ? node.body || '' : node.title || '';
-    const textarea = document.querySelector<HTMLTextAreaElement>(
-      `[data-node-id="${node.id}"] textarea[data-text-target="${target}"]`
-    );
+    const escapedNodeId =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(node.id)
+        : node.id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+    const selector = `[data-node-id="${escapedNodeId}"] textarea[data-text-target="${target}"]`;
+    const textarea = document.querySelector<HTMLTextAreaElement>(selector);
 
     if (textarea) {
       const start = textarea.selectionStart ?? currentText.length;
@@ -228,9 +231,7 @@ export const NodeFormattingBar: React.FC<NodeFormattingBarProps> = ({
       const nextText = currentText.slice(0, start) + sym + currentText.slice(end);
       onUpdateNode(node.id, target === 'body' ? { body: nextText } : { title: nextText });
       requestAnimationFrame(() => {
-        const el = document.querySelector<HTMLTextAreaElement>(
-          `[data-node-id="${node.id}"] textarea[data-text-target="${target}"]`
-        );
+        const el = document.querySelector<HTMLTextAreaElement>(selector);
         if (el) {
           const caret = start + sym.length;
           el.setSelectionRange(caret, caret);

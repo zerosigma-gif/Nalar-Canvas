@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { ImagePlus, Link2, Upload, X, Trash2 } from 'lucide-react';
 import { MediaAttachment } from '../types/canvas';
+import { isValidMediaUrl } from '../utils/boardSanitize';
 
 interface MediaModalProps {
   initialMedia?: MediaAttachment | null;
@@ -55,6 +56,10 @@ export const MediaModal: React.FC<MediaModalProps> = ({
     setError(null);
     try {
       const dataUrl = await compressImageFile(file);
+      if (!isValidMediaUrl(dataUrl)) {
+        setError('Gambar hasil kompresi melebihi batas ukuran atau format tidak didukung.');
+        return;
+      }
       setUrl(dataUrl);
       if (!caption) {
         setCaption(file.name.replace(/\.[^.]+$/, ''));
@@ -68,13 +73,20 @@ export const MediaModal: React.FC<MediaModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url.trim()) {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
       setError('Masukkan URL gambar atau unggah file gambar.');
+      return;
+    }
+    if (!isValidMediaUrl(trimmedUrl)) {
+      setError(
+        'Gunakan URL https:// publik yang valid atau unggah gambar PNG/JPEG/WEBP/GIF (tautan lokal, non-https, atau SVG tidak diizinkan).'
+      );
       return;
     }
     onSave({
       id: initialMedia?.id ?? `media-${crypto.randomUUID().slice(0, 6)}`,
-      url: url.trim(),
+      url: trimmedUrl,
       caption: caption.trim(),
       aspectRatio: '16:9',
     });

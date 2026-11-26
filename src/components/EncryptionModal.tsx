@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShieldCheck, X, RefreshCw, Users } from 'lucide-react';
 
 interface EncryptionModalProps {
+  isOwner: boolean;
   e2eeEnabled: boolean;
   keyFingerprint: string | null;
   onToggleE2ee: (enabled: boolean) => void;
@@ -11,6 +12,7 @@ interface EncryptionModalProps {
 }
 
 export const EncryptionModal: React.FC<EncryptionModalProps> = ({
+  isOwner,
   e2eeEnabled,
   keyFingerprint,
   onToggleE2ee,
@@ -21,6 +23,7 @@ export const EncryptionModal: React.FC<EncryptionModalProps> = ({
   const [rotating, setRotating] = useState(false);
 
   const handleRotate = async () => {
+    if (!isOwner) return;
     setRotating(true);
     try {
       await onRotateRandomKey();
@@ -73,8 +76,9 @@ export const EncryptionModal: React.FC<EncryptionModalProps> = ({
           </div>
           <button
             type="button"
+            disabled={!isOwner}
             onClick={() => onToggleE2ee(!e2eeEnabled)}
-            className={`h-9 px-3.5 rounded-lg text-xs font-semibold transition-colors shrink-0 ${
+            className={`h-9 px-3.5 rounded-lg text-xs font-semibold transition-colors shrink-0 disabled:opacity-55 disabled:cursor-not-allowed ${
               e2eeEnabled
                 ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                 : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700'
@@ -83,6 +87,12 @@ export const EncryptionModal: React.FC<EncryptionModalProps> = ({
             {e2eeEnabled ? 'Aktif' : 'Nonaktif'}
           </button>
         </div>
+
+        {!isOwner && (
+          <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+            Hanya pembuat ruang yang dapat mengubah mode enkripsi atau memutar kunci ruang.
+          </p>
+        )}
 
         {e2eeEnabled && (
           <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2.5">
@@ -93,8 +103,8 @@ export const EncryptionModal: React.FC<EncryptionModalProps> = ({
               <button
                 type="button"
                 onClick={handleRotate}
-                disabled={rotating}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-60"
+                disabled={rotating || !isOwner}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`w-3 h-3 ${rotating ? 'animate-spin' : ''}`} />
                 <span>Putar Kunci Acak</span>

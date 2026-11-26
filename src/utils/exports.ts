@@ -15,6 +15,7 @@ import {
 import { jsPDF } from 'jspdf';
 import PptxGenJS from 'pptxgenjs';
 import { BoardDocument, CanvasEdge, CanvasNode } from '../types/canvas';
+import { isValidMediaUrl } from './boardSanitize';
 import { formatCellValue } from './tableFormat';
 import { isDarkHexColor, resolveBodyStyle } from './templates';
 import {
@@ -45,8 +46,12 @@ function triggerDownload(blob: Blob, filename: string): void {
 }
 
 function loadImageElement(src: string): Promise<HTMLImageElement | null> {
+  if (!isValidMediaUrl(src)) {
+    return Promise.resolve(null);
+  }
   return new Promise((resolve) => {
     const img = new Image();
+    img.referrerPolicy = 'no-referrer';
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => resolve(null);
@@ -886,11 +891,11 @@ export async function exportAsDocx(doc: BoardDocument): Promise<void> {
       );
     }
 
-    if (node.media?.url && node.media.url.startsWith('data:image/')) {
+    if (node.media?.url && node.media.url.startsWith('data:image/') && isValidMediaUrl(node.media.url)) {
       const imgBytes = dataUrlToUint8Array(node.media.url);
       if (imgBytes) {
-        const mimeMatch = node.media.url.match(/^data:image\/(png|jpeg|jpg|gif);/);
-        const imgType = mimeMatch?.[1] === 'png' ? 'png' : 'jpg';
+        const mimeMatch = node.media.url.match(/^data:image\/(png|jpeg|jpg|gif);/i);
+        const imgType = mimeMatch?.[1]?.toLowerCase() === 'png' ? 'png' : 'jpg';
         children.push(
           new Paragraph({
             spacing: { after: 120 },
@@ -1056,7 +1061,7 @@ export async function exportAsPptx(doc: BoardDocument, darkMode: boolean): Promi
       });
     }
 
-    if (node.media?.url && node.media.url.startsWith('data:image/')) {
+    if (node.media?.url && node.media.url.startsWith('data:image/') && isValidMediaUrl(node.media.url)) {
       slide.addImage({
         data: node.media.url,
         x: 7.5,
@@ -1093,6 +1098,10 @@ export async function exportAsPptx(doc: BoardDocument, darkMode: boolean): Promi
   await pptx.writeFile({ fileName: `${sanitizeFileName(doc.title)}.pptx` });
 }
 
+function escapeMarkdownTableCell(val: string): string {
+  return val.replace(/\|/g, '\\|').replace(/\r?\n+/g, ' ').trim();
+}
+
 function formatMarkdownNodeDetails(node: CanvasNode, lines: string[]): void {
   if (node.body) {
     const bStyle = resolveBodyStyle(node);
@@ -1114,16 +1123,23 @@ function formatMarkdownNodeDetails(node: CanvasNode, lines: string[]): void {
     lines.push('');
     lines.push(`> Stamp Waktu: \`${node.timestampStamp}\``);
   }
-  if (node.media?.url) {
+  if (node.media?.url && isValidMediaUrl(node.media.url)) {
+    const safeCaption = (node.media.caption || node.title)
+      .replace(/[\[\]\r\n]/g, ' ')
+      .trim();
     lines.push('');
-    lines.push(`![${node.media.caption || node.title}](${node.media.url})`);
+    lines.push(`![${safeCaption}](${node.media.url})`);
   }
   if (node.table && node.table.columns.length > 0) {
     lines.push('');
-    lines.push(`| ${node.table.columns.map((c) => c.name).join(' | ')} |`);
+    lines.push(
+      `| ${node.table.columns.map((c) => escapeMarkdownTableCell(c.name)).join(' | ')} |`
+    );
     lines.push(`| ${node.table.columns.map(() => '---').join(' | ')} |`);
     for (const row of node.table.rows) {
-      const vals = node.table.columns.map((c) => formatCellValue(c, row.cells[c.id]));
+      const vals = node.table.columns.map((c) =>
+        escapeMarkdownTableCell(formatCellValue(c, row.cells[c.id]))
+      );
       lines.push(`| ${vals.join(' | ')} |`);
     }
   }

@@ -32,14 +32,13 @@ import {
   RoomLifetimeMinutes,
   TemplateId,
 } from './types/canvas';
+import { sanitizeBoardDocument } from './utils/boardSanitize';
 import {
   decryptPayload,
-  deriveAccessVerifier,
   deriveAccessVerifierFromPassphrase,
+  deriveSessionFromRawKey,
   encryptPayload,
   generateRoomKeyBase64,
-  getKeyFingerprint,
-  importRawRoomKey,
 } from './utils/crypto';
 import {
   exportAsDocx,
@@ -62,11 +61,54 @@ import {
 } from './utils/layout';
 import { computeTimeframeGrid } from './utils/timeframe';
 
+const ROOM_ID_ALPHANUM =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+const OWNER_TOKEN_STORAGE_PREFIX = 'nalarcanvas:owner:';
+
+function generateRandomRoomId(): string {
+  const chars: string[] = [];
+  const buf = new Uint8Array(32);
+  while (chars.length < 16) {
+    crypto.getRandomValues(buf);
+    for (let i = 0; i < buf.length && chars.length < 16; i++) {
+      const byte = buf[i];
+      if (byte < 248) {
+        chars.push(ROOM_ID_ALPHANUM[byte % ROOM_ID_ALPHANUM.length]);
+      }
+    }
+  }
+  return `ruang-${chars.join('')}`;
+}
+
+function getStoredOwnerToken(targetRoomId: string): string | null {
+  try {
+    return window.sessionStorage.getItem(`${OWNER_TOKEN_STORAGE_PREFIX}${targetRoomId}`);
+  } catch {
+    return null;
+  }
+}
+
+function createAndStoreOwnerToken(targetRoomId: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const token = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  try {
+    window.sessionStorage.setItem(`${OWNER_TOKEN_STORAGE_PREFIX}${targetRoomId}`, token);
+  } catch {
+    // Ignore sessionStorage restrictions
+  }
+  return token;
+}
+
 function getInitialRoomId(): string {
   const params = new URLSearchParams(window.location.search);
   const existing = params.get('room');
   if (existing && existing.trim()) return existing.trim();
-  const generated = `ruang-${crypto.randomUUID().slice(0, 6)}`;
+  const generated = generateRandomRoomId();
+  createAndStoreOwnerToken(generated);
   params.set('room', generated);
   const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
   window.history.replaceState(null, '', nextUrl);
@@ -96,7 +138,16 @@ const DEFAULT_USER_COLORS = ['#2563EB', '#059669', '#D97706', '#7C3AED', '#0891B
 export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [roomId, setRoomId] = useState<string>(() => getInitialRoomId());
-  const [clientId] = useState<string>(() => `user-${crypto.randomUUID().slice(0, 8)}`);
+  const roomIdRef = useRef(roomId);
+  roomIdRef.current = roomId;
+  const [clientId, setClientId] = useState<string>(() => `user-${crypto.randomUUID().slice(0, 8)}`);
+  const clientIdRef = useRef(clientId);
+  clientIdRef.current = clientId;
+  const [isOwner, setIsOwner] = useState<boolean>(
+    () => !isInvitePasswordMode() && Boolean(getStoredOwnerToken(roomId))
+  );
+  const isOwnerRef = useRef(isOwner);
+  isOwnerRef.current = isOwner;
   const [userName, setUserName] = useState<string>(() => `Kreator-${Math.floor(100 + Math.random() * 900)}`);
   const [userColor, setUserColor] = useState<string>(
     () => DEFAULT_USER_COLORS[Math.floor(Math.random() * DEFAULT_USER_COLORS.length)]
@@ -229,17 +280,16 @@ export default function App() {
       const existingHash = getHashKey();
       if (existingHash) {
         try {
-          const imported = await importRawRoomKey(existingHash);
-          const fp = await getKeyFingerprint(imported);
-          const verifier = await deriveAccessVerifier(roomId, existingHash);
+          const session = await deriveSessionFromRawKey(existingHash, roomId);
           if (!cancelled) {
             setRoomKeyBase64(existingHash);
-            setCryptoKey(imported);
-            cryptoKeyRef.current = imported;
-            accessVerifierRef.current = verifier;
+            setCryptoKey(session.key);
+            cryptoKeyRef.current = session.key;
+            accessVerifierRef.current = session.accessVerifier;
             passwordProtectedRef.current = false;
-            setKeyFingerprint(fp);
+            setKeyFingerprint(session.keyFingerprint);
             setE2eeEnabled(true);
+            e2eeEnabledRef.current = true;
             setAuthReady(true);
           }
           return;
@@ -250,23 +300,29 @@ export default function App() {
       if (isInvitePasswordMode()) {
         if (!cancelled) {
           accessVerifierRef.current = null;
+          setIsOwner(false);
+          isOwnerRef.current = false;
           setAuthReady(true);
         }
         return;
       }
+      if (!getStoredOwnerToken(roomId)) {
+        createAndStoreOwnerToken(roomId);
+      }
       const freshB64 = generateRoomKeyBase64();
-      const imported = await importRawRoomKey(freshB64);
-      const fp = await getKeyFingerprint(imported);
-      const verifier = await deriveAccessVerifier(roomId, freshB64);
+      const session = await deriveSessionFromRawKey(freshB64, roomId);
       if (!cancelled) {
         setRoomKeyBase64(freshB64);
-        setCryptoKey(imported);
-        cryptoKeyRef.current = imported;
-        accessVerifierRef.current = verifier;
+        setCryptoKey(session.key);
+        cryptoKeyRef.current = session.key;
+        accessVerifierRef.current = session.accessVerifier;
         passwordProtectedRef.current = false;
-        setKeyFingerprint(fp);
+        setKeyFingerprint(session.keyFingerprint);
         setHashKey(freshB64);
         setE2eeEnabled(true);
+        e2eeEnabledRef.current = true;
+        setIsOwner(true);
+        isOwnerRef.current = true;
         setAuthReady(true);
       }
     }
@@ -284,7 +340,11 @@ export default function App() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     if (e2eeEnabledRef.current && cryptoKeyRef.current) {
-      const envelope = await encryptPayload(cryptoKeyRef.current, targetBoard);
+      const envelope = await encryptPayload(
+        cryptoKeyRef.current,
+        targetBoard,
+        roomIdRef.current
+      );
       ws.send(
         JSON.stringify({
           type: 'board:sync',
@@ -315,9 +375,9 @@ export default function App() {
     [transmitBoardSync]
   );
 
-  // Try decrypting incoming envelope with current key
+  // Try decrypting incoming envelope with current key & sanitize resulting BoardDocument
   const applyIncomingEnvelope = useCallback(
-    async (envelope: EncryptedEnvelope) => {
+    async (envelope: EncryptedEnvelope, targetRoomId = roomIdRef.current) => {
       const key = cryptoKeyRef.current;
       if (!key) {
         setPendingEncryptedEnvelope(envelope);
@@ -325,8 +385,9 @@ export default function App() {
         return;
       }
       try {
-        const decrypted = await decryptPayload<BoardDocument>(key, envelope);
-        setBoard(decrypted);
+        const decrypted = await decryptPayload<unknown>(key, envelope, targetRoomId);
+        const sanitized = sanitizeBoardDocument(decrypted, targetRoomId);
+        setBoard(sanitized);
         setPendingEncryptedEnvelope(null);
         setIsLockedNeedsPassphrase(false);
         setDecryptError(null);
@@ -375,7 +436,8 @@ export default function App() {
             JSON.stringify({
               type: 'room:join',
               roomId,
-              clientId,
+              clientId: clientIdRef.current,
+              ownerToken: getStoredOwnerToken(roomId),
               name: userNameRef.current,
               color: userColorRef.current,
               accessVerifier: verifier,
@@ -403,6 +465,14 @@ export default function App() {
             setInviteRoomNotFound(false);
             setCooldownLockedUntil(0);
             setFailedAuthAttempts(0);
+            if (typeof msg.clientId === 'string' && msg.clientId) {
+              clientIdRef.current = msg.clientId;
+              setClientId(msg.clientId);
+            }
+            const nextIsOwner = msg.isOwner === true;
+            isOwnerRef.current = nextIsOwner;
+            setIsOwner(nextIsOwner);
+
             if (Array.isArray(msg.peers)) {
               setPeers(msg.peers);
             }
@@ -412,12 +482,14 @@ export default function App() {
             }
             if (msg.encrypted && msg.encryptedEnvelope) {
               setE2eeEnabled(true);
-              await applyIncomingEnvelope(msg.encryptedEnvelope);
+              e2eeEnabledRef.current = true;
+              await applyIncomingEnvelope(msg.encryptedEnvelope, roomId);
             } else if (!msg.encrypted && msg.plainBoard) {
               setE2eeEnabled(false);
+              e2eeEnabledRef.current = false;
               setIsLockedNeedsPassphrase(false);
               setDecryptError(null);
-              setBoard(msg.plainBoard);
+              setBoard(sanitizeBoardDocument(msg.plainBoard, roomId));
             } else {
               setIsLockedNeedsPassphrase(false);
               setDecryptError(null);
@@ -536,13 +608,19 @@ export default function App() {
               5000
             );
           } else if (msg.type === 'board:updated') {
-            if (msg.senderId === clientId) return;
+            if (msg.senderId === clientIdRef.current) return;
             if (msg.encrypted && msg.encryptedEnvelope) {
               setE2eeEnabled(true);
-              await applyIncomingEnvelope(msg.encryptedEnvelope);
+              e2eeEnabledRef.current = true;
+              await applyIncomingEnvelope(msg.encryptedEnvelope, roomId);
             } else if (!msg.encrypted && msg.plainBoard) {
-              setE2eeEnabled(false);
-              setBoard(msg.plainBoard);
+              if (e2eeEnabledRef.current) {
+                showToast(
+                  'Pembaruan tidak terenkripsi ditolak karena ruang ini berada dalam mode E2EE aktif.'
+                );
+                return;
+              }
+              setBoard(sanitizeBoardDocument(msg.plainBoard, roomId));
             }
           } else if (msg.type === 'presence:list') {
             if (Array.isArray(msg.peers)) {
@@ -611,7 +689,7 @@ export default function App() {
       }
       wsRef.current = null;
     };
-  }, [authReady, roomId, clientId, applyIncomingEnvelope, showToast, transmitBoardSync]);
+  }, [authReady, roomId, applyIncomingEnvelope, showToast, transmitBoardSync]);
 
   // Helper to commit board mutations with Undo/Redo & Real-time E2EE Sync
   const commitBoardChange = useCallback(
@@ -1420,26 +1498,28 @@ export default function App() {
 
   // E2EE & Server Access Controls
   const handleToggleE2ee = async (enabled: boolean) => {
+    if (!isOwnerRef.current) {
+      showToast('Hanya pembuat ruang yang dapat mengubah mode enkripsi ruang.');
+      return;
+    }
     setE2eeEnabled(enabled);
     e2eeEnabledRef.current = enabled;
     if (enabled && !cryptoKey) {
       const b64 = generateRoomKeyBase64();
-      const k = await importRawRoomKey(b64);
-      const fp = await getKeyFingerprint(k);
-      const verifier = await deriveAccessVerifier(roomId, b64);
+      const session = await deriveSessionFromRawKey(b64, roomId);
       setRoomKeyBase64(b64);
-      setCryptoKey(k);
-      cryptoKeyRef.current = k;
-      accessVerifierRef.current = verifier;
+      setCryptoKey(session.key);
+      cryptoKeyRef.current = session.key;
+      accessVerifierRef.current = session.accessVerifier;
       passwordProtectedRef.current = false;
-      setKeyFingerprint(fp);
+      setKeyFingerprint(session.keyFingerprint);
       setHashKey(b64);
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
             type: 'room:set-access',
-            accessVerifier: verifier,
+            accessVerifier: session.accessVerifier,
             passwordProtected: false,
           })
         );
@@ -1453,17 +1533,17 @@ export default function App() {
   };
 
   const handleSetPassphrase = async (passphrase: string) => {
-    const { key, keyBase64Url, accessVerifier } = await deriveAccessVerifierFromPassphrase(
-      passphrase,
-      roomId
-    );
-    const fp = await getKeyFingerprint(key);
-    setCryptoKey(key);
-    cryptoKeyRef.current = key;
-    accessVerifierRef.current = accessVerifier;
+    if (!isOwnerRef.current) {
+      showToast('Hanya pembuat ruang yang dapat mengatur kata sandi ruang.');
+      return;
+    }
+    const session = await deriveAccessVerifierFromPassphrase(passphrase, roomId);
+    setCryptoKey(session.key);
+    cryptoKeyRef.current = session.key;
+    accessVerifierRef.current = session.accessVerifier;
     passwordProtectedRef.current = true;
-    setRoomKeyBase64(keyBase64Url);
-    setKeyFingerprint(fp);
+    setRoomKeyBase64(session.keyBase64Url);
+    setKeyFingerprint(session.keyFingerprint);
     setE2eeEnabled(true);
     e2eeEnabledRef.current = true;
     // Strip key from URL hash so passphrase stays secret
@@ -1473,7 +1553,7 @@ export default function App() {
       ws.send(
         JSON.stringify({
           type: 'room:set-access',
-          accessVerifier,
+          accessVerifier: session.accessVerifier,
           passwordProtected: true,
         })
       );
@@ -1483,23 +1563,25 @@ export default function App() {
   };
 
   const handleRotateRandomKey = async () => {
+    if (!isOwnerRef.current) {
+      showToast('Hanya pembuat ruang yang dapat memutar kunci enkripsi.');
+      return;
+    }
     const b64 = generateRoomKeyBase64();
-    const k = await importRawRoomKey(b64);
-    const fp = await getKeyFingerprint(k);
-    const verifier = await deriveAccessVerifier(roomId, b64);
-    setCryptoKey(k);
-    cryptoKeyRef.current = k;
-    accessVerifierRef.current = verifier;
+    const session = await deriveSessionFromRawKey(b64, roomId);
+    setCryptoKey(session.key);
+    cryptoKeyRef.current = session.key;
+    accessVerifierRef.current = session.accessVerifier;
     passwordProtectedRef.current = false;
     setRoomKeyBase64(b64);
-    setKeyFingerprint(fp);
+    setKeyFingerprint(session.keyFingerprint);
     setHashKey(b64);
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(
         JSON.stringify({
           type: 'room:set-access',
-          accessVerifier: verifier,
+          accessVerifier: session.accessVerifier,
           passwordProtected: false,
         })
       );
@@ -1529,18 +1611,14 @@ export default function App() {
     setUserColor(color);
     userColorRef.current = color;
 
-    const { key, keyBase64Url, accessVerifier } = await deriveAccessVerifierFromPassphrase(
-      passphrase,
-      roomId
-    );
-    const fp = await getKeyFingerprint(key);
+    const session = await deriveAccessVerifierFromPassphrase(passphrase, roomId);
 
     // Hold candidate credentials until server verifies accessVerifier before sending room:init
-    cryptoKeyRef.current = key;
-    setCryptoKey(key);
-    setRoomKeyBase64(keyBase64Url);
-    setKeyFingerprint(fp);
-    accessVerifierRef.current = accessVerifier;
+    cryptoKeyRef.current = session.key;
+    setCryptoKey(session.key);
+    setRoomKeyBase64(session.keyBase64Url);
+    setKeyFingerprint(session.keyFingerprint);
+    accessVerifierRef.current = session.accessVerifier;
     passwordProtectedRef.current = true;
 
     const verified = await new Promise<boolean>((resolve) => {
@@ -1561,10 +1639,11 @@ export default function App() {
         JSON.stringify({
           type: 'room:join',
           roomId,
-          clientId,
+          clientId: clientIdRef.current,
+          ownerToken: getStoredOwnerToken(roomId),
           name,
           color,
-          accessVerifier,
+          accessVerifier: session.accessVerifier,
           isInvite: true,
           authAttempt: true,
         })
@@ -1586,24 +1665,25 @@ export default function App() {
   };
 
   const handleCreateOwnRoom = async (keepCurrentCanvas = false) => {
-    const newRoomId = `ruang-${crypto.randomUUID().slice(0, 6)}`;
+    const newRoomId = generateRandomRoomId();
+    createAndStoreOwnerToken(newRoomId);
     const freshB64 = generateRoomKeyBase64();
-    const imported = await importRawRoomKey(freshB64);
-    const fp = await getKeyFingerprint(imported);
-    const verifier = await deriveAccessVerifier(newRoomId, freshB64);
+    const session = await deriveSessionFromRawKey(freshB64, newRoomId);
 
     roomExpiredStopReconnectRef.current = false;
     setExpiredRoomNotice(null);
     setSessionWarningBanner(null);
     setRoomLifetime(null);
     setRoomKeyBase64(freshB64);
-    setCryptoKey(imported);
-    cryptoKeyRef.current = imported;
-    accessVerifierRef.current = verifier;
+    setCryptoKey(session.key);
+    cryptoKeyRef.current = session.key;
+    accessVerifierRef.current = session.accessVerifier;
     passwordProtectedRef.current = false;
-    setKeyFingerprint(fp);
+    setKeyFingerprint(session.keyFingerprint);
     setE2eeEnabled(true);
     e2eeEnabledRef.current = true;
+    setIsOwner(true);
+    isOwnerRef.current = true;
     setPendingEncryptedEnvelope(null);
     setIsLockedNeedsPassphrase(false);
     setInviteRoomNotFound(false);
@@ -1683,6 +1763,9 @@ export default function App() {
     if (roomExists) {
       // Existing room: require server verification via CollaboratorInviteLogin before room:init
       accessVerifierRef.current = null;
+      const existingOwner = Boolean(getStoredOwnerToken(nextRoomId));
+      setIsOwner(existingOwner);
+      isOwnerRef.current = existingOwner;
       setIsLockedNeedsPassphrase(true);
       url.searchParams.set('invite', '1');
       url.hash = '';
@@ -1693,20 +1776,21 @@ export default function App() {
       return;
     }
 
-    // New room: generate fresh key + accessVerifier so server admits creator
+    // New room: generate fresh key + accessVerifier + ownerToken so server admits creator
+    createAndStoreOwnerToken(nextRoomId);
     const freshB64 = generateRoomKeyBase64();
-    const imported = await importRawRoomKey(freshB64);
-    const fp = await getKeyFingerprint(imported);
-    const verifier = await deriveAccessVerifier(nextRoomId, freshB64);
+    const session = await deriveSessionFromRawKey(freshB64, nextRoomId);
 
     setRoomKeyBase64(freshB64);
-    setCryptoKey(imported);
-    cryptoKeyRef.current = imported;
-    accessVerifierRef.current = verifier;
+    setCryptoKey(session.key);
+    cryptoKeyRef.current = session.key;
+    accessVerifierRef.current = session.accessVerifier;
     passwordProtectedRef.current = false;
-    setKeyFingerprint(fp);
+    setKeyFingerprint(session.keyFingerprint);
     setE2eeEnabled(true);
     e2eeEnabledRef.current = true;
+    setIsOwner(true);
+    isOwnerRef.current = true;
     setIsLockedNeedsPassphrase(false);
     setBoard(buildFromScratchBoard(nextRoomId));
 
@@ -1719,6 +1803,10 @@ export default function App() {
   };
 
   const handleSetRoomLifetime = (minutes: RoomLifetimeMinutes) => {
+    if (!isOwnerRef.current) {
+      showToast('Hanya pembuat ruang yang dapat mengubah masa hidup ruang.');
+      return;
+    }
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       showToast('WebSocket belum terhubung. Tidak dapat mengatur batas waktu room.');
@@ -2069,6 +2157,7 @@ export default function App() {
         <CollaborationModal
           roomId={roomId}
           clientId={clientId}
+          isOwner={isOwner}
           userName={userName}
           userColor={userColor}
           wsConnected={wsConnected}
@@ -2087,6 +2176,7 @@ export default function App() {
 
       {showEncryption && (
         <EncryptionModal
+          isOwner={isOwner}
           e2eeEnabled={e2eeEnabled}
           keyFingerprint={keyFingerprint}
           onToggleE2ee={handleToggleE2ee}
